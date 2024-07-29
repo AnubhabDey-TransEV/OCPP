@@ -24,7 +24,7 @@ class OCPPMessage(BaseModel):
     Timestamp = DateTimeField(default=datetime.utcnow)
 
     class Meta:
-        table_name = 'CMS_to_Charger'
+        table_name = 'Charger_to_CMS'
 
 # Ensure the table is created
 db.connect()
@@ -34,7 +34,7 @@ db.create_tables([OCPPMessage])
 def insert_data(data):
     OCPPMessage.create(**data)
 
-# Function to format and store messages and acknowledgments from CMS to Charger
+# Function to format and store messages and acknowledgments from Chargers to CMS
 def store_ocpp_message(charger_id, message_type, message_category, **kwargs):
     data = {
         "Message_Type": message_type,
@@ -50,40 +50,36 @@ def store_ocpp_message(charger_id, message_type, message_category, **kwargs):
     insert_data(data)
 
 # Example functions for specific message types
-def parse_and_store_remote_start_transaction(charger_id, **kwargs):
-    message_type = "RemoteStartTransaction"
+def parse_and_store_boot_notification(charger_id, **kwargs):
+    message_type = "BootNotification"
     store_ocpp_message(charger_id, message_type, "Request", **kwargs)
 
-def parse_and_store_remote_stop_transaction(charger_id, **kwargs):
-    message_type = "RemoteStopTransaction"
+def parse_and_store_heartbeat(charger_id, **kwargs):
+    message_type = "Heartbeat"
     store_ocpp_message(charger_id, message_type, "Request", **kwargs)
 
-def parse_and_store_change_availability(charger_id, **kwargs):
-    message_type = "ChangeAvailability"
+def parse_and_store_start_transaction(charger_id, **kwargs):
+    message_type = "StartTransaction"
     store_ocpp_message(charger_id, message_type, "Request", **kwargs)
 
-def parse_and_store_change_configuration(charger_id, **kwargs):
-    message_type = "ChangeConfiguration"
+def parse_and_store_stop_transaction(charger_id, **kwargs):
+    message_type = "StopTransaction"
     store_ocpp_message(charger_id, message_type, "Request", **kwargs)
 
-def parse_and_store_clear_cache(charger_id, **kwargs):
-    message_type = "ClearCache"
+def parse_and_store_meter_values(charger_id, **kwargs):
+    message_type = "MeterValues"
     store_ocpp_message(charger_id, message_type, "Request", **kwargs)
 
-def parse_and_store_unlock_connector(charger_id, **kwargs):
-    message_type = "UnlockConnector"
+def parse_and_store_status_notification(charger_id, **kwargs):
+    message_type = "StatusNotification"
     store_ocpp_message(charger_id, message_type, "Request", **kwargs)
 
-def parse_and_store_get_diagnostics(charger_id, **kwargs):
-    message_type = "GetDiagnostics"
+def parse_and_store_diagnostics_status(charger_id, **kwargs):
+    message_type = "DiagnosticsStatusNotification"
     store_ocpp_message(charger_id, message_type, "Request", **kwargs)
 
-def parse_and_store_update_firmware(charger_id, **kwargs):
-    message_type = "UpdateFirmware"
-    store_ocpp_message(charger_id, message_type, "Request", **kwargs)
-
-def parse_and_store_reset(charger_id, **kwargs):
-    message_type = "Reset"
+def parse_and_store_firmware_status(charger_id, **kwargs):
+    message_type = "FirmwareStatusNotification"
     store_ocpp_message(charger_id, message_type, "Request", **kwargs)
 
 def parse_and_store_acknowledgment(charger_id, message_type, original_message_type, original_message_time, **kwargs):
