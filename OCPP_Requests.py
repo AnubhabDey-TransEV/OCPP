@@ -1,12 +1,14 @@
+from datetime import datetime, timezone
+import pytz
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
 from ocpp.routing import on
 from ocpp.v16 import call, call_result, ChargePoint as CP
 import Chargers_to_CMS_Parser as parser_c2c
 import CMS_to_Charger_Parser as parser_ctc
 
 logging.basicConfig(level=logging.DEBUG)
+IST = pytz.timezone('Asia/Kolkata')
 
 class ChargePoint(CP):
     def __init__(self, id, websocket):
@@ -14,15 +16,12 @@ class ChargePoint(CP):
         self.charger_id = id  # Store Charger_ID
 
     def currdatetime(self):
-        utc_time = datetime.now(timezone.utc)
-        ist_time = utc_time + timedelta(hours=5, minutes=30)
-        return ist_time.isoformat()
-    
+        return datetime.now(timezone.utc).astimezone(IST).isoformat()
+
     # Inbound messages from chargers to CMS
     @on('BootNotification')
-    async def on_boot_notification(self, **kwargs):
-        logging.debug(f"Received BootNotification with kwargs: {kwargs}")
-        parser_c2c.parse_and_store_boot_notification(self.charger_id, **kwargs)
+    async def on_boot_notification(self, charge_point_vendor, charge_point_model, **kwargs):
+        parser_c2c.parse_and_store_boot_notification(self.charger_id, charge_point_vendor=charge_point_vendor, charge_point_model=charge_point_model, **kwargs)
 
         response = call_result.BootNotification(
             current_time=self.currdatetime(),
@@ -34,7 +33,6 @@ class ChargePoint(CP):
 
     @on('Heartbeat')
     async def on_heartbeat(self, **kwargs):
-        logging.debug(f"Received Heartbeat with kwargs: {kwargs}")
         parser_c2c.parse_and_store_heartbeat(self.charger_id, **kwargs)
 
         response = call_result.Heartbeat(current_time=self.currdatetime())
@@ -42,9 +40,8 @@ class ChargePoint(CP):
         return response
 
     @on('StartTransaction')
-    async def on_start_transaction(self, **kwargs):
-        logging.debug(f"Received StartTransaction with kwargs: {kwargs}")
-        parser_c2c.parse_and_store_start_transaction(self.charger_id, **kwargs)
+    async def on_start_transaction(self, connector_id, id_tag, timestamp, meter_start, reservation_id=None, **kwargs):
+        parser_c2c.parse_and_store_start_transaction(self.charger_id, connector_id=connector_id, id_tag=id_tag, timestamp=timestamp, meter_start=meter_start, reservation_id=reservation_id, **kwargs)
 
         response = call_result.StartTransaction(
             transaction_id=1,
@@ -56,49 +53,44 @@ class ChargePoint(CP):
         return response
 
     @on('StopTransaction')
-    async def on_stop_transaction(self, **kwargs):
-        logging.debug(f"Received StopTransaction with kwargs: {kwargs}")
-        parser_c2c.parse_and_store_stop_transaction(self.charger_id, **kwargs)
+    async def on_stop_transaction(self, transaction_id, id_tag, timestamp, meter_stop, reason=None, **kwargs):
+        parser_c2c.parse_and_store_stop_transaction(self.charger_id, transaction_id=transaction_id, id_tag=id_tag, timestamp=timestamp, meter_stop=meter_stop, reason=reason, **kwargs)
 
         response = call_result.StopTransaction(
             id_tag_info={
                 'status': 'Accepted'
             }
         )
-        parser_ctc.parse_and_store_acknowledgment(self.charger_id, "StopTransaction", "StopTransaction", self.currdatetime(), transaction_id=kwargs.get('transactionId'), status='Accepted')
+        parser_ctc.parse_and_store_acknowledgment(self.charger_id, "StopTransaction", "StopTransaction", self.currdatetime(), transaction_id=transaction_id, status='Accepted')
         return response
 
     @on('MeterValues')
-    async def on_meter_values(self, **kwargs):
-        logging.debug(f"Received MeterValues with kwargs: {kwargs}")
-        parser_c2c.parse_and_store_meter_values(self.charger_id, **kwargs)
+    async def on_meter_values(self, connector_id, transaction_id, meter_value, **kwargs):
+        parser_c2c.parse_and_store_meter_values(self.charger_id, connector_id=connector_id, transaction_id=transaction_id, meter_value=meter_value, **kwargs)
 
         response = call_result.MeterValues()
         parser_ctc.parse_and_store_acknowledgment(self.charger_id, "MeterValues", "MeterValues", self.currdatetime())
         return response
 
     @on('StatusNotification')
-    async def on_status_notification(self, **kwargs):
-        logging.debug(f"Received StatusNotification with kwargs: {kwargs}")
-        parser_c2c.parse_and_store_status_notification(self.charger_id, **kwargs)
+    async def on_status_notification(self, connector_id, status, error_code, info=None, timestamp=None, **kwargs):
+        parser_c2c.parse_and_store_status_notification(self.charger_id, connector_id=connector_id, status=status, error_code=error_code, info=info, timestamp=timestamp, **kwargs)
 
         response = call_result.StatusNotification()
         parser_ctc.parse_and_store_acknowledgment(self.charger_id, "StatusNotification", "StatusNotification", self.currdatetime())
         return response
 
     @on('DiagnosticsStatusNotification')
-    async def on_diagnostics_status_notification(self, **kwargs):
-        logging.debug(f"Received DiagnosticsStatusNotification with kwargs: {kwargs}")
-        parser_c2c.parse_and_store_diagnostics_status(self.charger_id, **kwargs)
+    async def on_diagnostics_status_notification(self, status, **kwargs):
+        parser_c2c.parse_and_store_diagnostics_status(self.charger_id, status=status, **kwargs)
 
         response = call_result.DiagnosticsStatusNotification()
         parser_ctc.parse_and_store_acknowledgment(self.charger_id, "DiagnosticsStatusNotification", "DiagnosticsStatusNotification", self.currdatetime())
         return response
 
     @on('FirmwareStatusNotification')
-    async def on_firmware_status_notification(self, **kwargs):
-        logging.debug(f"Received FirmwareStatusNotification with kwargs: {kwargs}")
-        parser_c2c.parse_and_store_firmware_status(self.charger_id, **kwargs)
+    async def on_firmware_status_notification(self, status, **kwargs):
+        parser_c2c.parse_and_store_firmware_status(self.charger_id, status=status, **kwargs)
 
         response = call_result.FirmwareStatusNotification()
         parser_ctc.parse_and_store_acknowledgment(self.charger_id, "FirmwareStatusNotification", "FirmwareStatusNotification", self.currdatetime())
@@ -200,7 +192,7 @@ class ChargePoint(CP):
         return response
 
     async def update_firmware(self, location, retrieve_date, retries=None, retry_interval=None):
-        logging.debug(f"Sending UpdateFirmware: location {location}, retrieve_date {retrieve_date}, retries={retries}, retry_interval={retry_interval}")
+        logging.debug(f"Sending UpdateFirmware: location {location}, retrieve_date={retrieve_date}, retries={retries}, retry_interval={retry_interval}")
         request = call.UpdateFirmware(
             location=location,
             retrieve_date=retrieve_date,
