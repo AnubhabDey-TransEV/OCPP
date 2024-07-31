@@ -1,6 +1,5 @@
-from peewee import Model, AutoField, CharField, DateTimeField, ForeignKeyField, MySQLDatabase
-from datetime import datetime, timezone
-import pytz
+from peewee import Model, AutoField, CharField, DateTimeField, MySQLDatabase
+from datetime import datetime, timezone, timedelta
 import logging
 import json
 
@@ -20,7 +19,7 @@ class BaseModel(Model):
     class Meta:
         database = db
 
-class Charger_to_CMS(BaseModel):
+class OCPPMessage(BaseModel):
     id = AutoField()  # Auto-incrementing primary key
     message_type = CharField()
     charger_id = CharField()
@@ -32,94 +31,70 @@ class Charger_to_CMS(BaseModel):
     class Meta:
         table_name = 'Charger_to_CMS'
 
-class Charger_to_CMS_MeterValue(BaseModel):
-    id = AutoField()
-    ocpp_message = ForeignKeyField(Charger_to_CMS, backref='meter_values')
-    timestamp = DateTimeField()
-    connector_id = CharField()
-    transaction_id = CharField()
-
-    class Meta:
-        table_name = 'Charger_to_CMS_MeterValue'
-
-class Charger_to_CMS_SampledValue(BaseModel):
-    id = AutoField()
-    meter_value = ForeignKeyField(Charger_to_CMS_MeterValue, backref='sampled_values')
-    value = CharField()
-    context = CharField(null=True)
-    format = CharField(null=True)
-    measurand = CharField(null=True)
-    phase = CharField(null=True)
-    location = CharField(null=True)
-    unit = CharField(null=True)
-
-    class Meta:
-        table_name = 'Charger_to_CMS_SampledValue'
-
-class Charger_to_CMS_Acknowledgment(BaseModel):
-    id = AutoField()
-    ocpp_message = ForeignKeyField(Charger_to_CMS, backref='acknowledgments')
-    status = CharField()
-    file_name = CharField(null=True)
-
-    class Meta:
-        table_name = 'Charger_to_CMS_Acknowledgment'
-
-# Ensure the tables are created
+# Ensure the table is created
 db.connect()
-db.create_tables([Charger_to_CMS, Charger_to_CMS_MeterValue, Charger_to_CMS_SampledValue, Charger_to_CMS_Acknowledgment])
+db.create_tables([OCPPMessage])
 
-IST = pytz.timezone('Asia/Kolkata')
-
-# Function to convert any datetime to IST
-def convert_to_ist(dt):
-    if isinstance(dt, str):
-        dt = datetime.fromisoformat(dt)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(IST)
-
-def get_ist_time():
-    return datetime.now(timezone.utc).astimezone(IST)
-
-def get_existing_columns(table):
-    cursor = db.execute_sql(f'SHOW COLUMNS FROM {table}')
+def get_existing_columns():
+    cursor = db.execute_sql('SHOW COLUMNS FROM Charger_to_CMS')
     return [column[0] for column in cursor.fetchall()]
 
-def add_column(table, column_name, column_type):
+def add_column(column_name, column_type):
     try:
         if column_type == 'string':
-            db.execute_sql(f'ALTER TABLE {table} ADD COLUMN {column_name} TEXT')
+            db.execute_sql(f'ALTER TABLE Charger_to_CMS ADD COLUMN {column_name} TEXT')
         elif column_type == 'integer':
-            db.execute_sql(f'ALTER TABLE {table} ADD COLUMN {column_name} INTEGER')
+            db.execute_sql(f'ALTER TABLE Charger_to_CMS ADD COLUMN {column_name} INTEGER')
         elif column_type == 'float':
-            db.execute_sql(f'ALTER TABLE {table} ADD COLUMN {column_name} FLOAT')
+            db.execute_sql(f'ALTER TABLE Charger_to_CMS ADD COLUMN {column_name} FLOAT')
         elif column_type == 'datetime':
-            db.execute_sql(f'ALTER TABLE {table} ADD COLUMN {column_name} DATETIME')
+            db.execute_sql(f'ALTER TABLE Charger_to_CMS ADD COLUMN {column_name} DATETIME')
     except Exception as e:
-        logging.error(f"Error adding column {column_name} to table {table}: {e}")
+        logging.error(f"Error adding column {column_name}: {e}")
 
-def insert_data(table, data):
-    existing_columns = get_existing_columns(table)
-    logging.debug(f"Existing columns in {table}: {existing_columns}")
-    logging.debug(f"Data to insert into {table}: {data}")
+def flatten_dict(d, parent_key='', sep='_'):
+    items = []
+    if isinstance(d, dict):
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, dict):
+                items.extend(flatten_dict(v, new_key, sep=sep).items())
+            elif isinstance(v, list):
+                for i, sub_dict in enumerate(v):
+                    if isinstance(sub_dict, dict):
+                        items.extend(flatten_dict(sub_dict, f"{new_key}{sep}{i}", sep=sep).items())
+                    else:
+                        items.append((f"{new_key}{sep}{i}", sub_dict))
+            else:
+                items.append((new_key, v))
+    else:
+        items.append((parent_key, d))
+    return dict(items)
+
+def insert_data(data):
+    existing_columns = get_existing_columns()
+    logging.debug(f"Existing columns: {existing_columns}")
+    logging.debug(f"Data to insert: {data}")
+
+    # Flatten the data
+    data = flatten_dict(data)
+
+    # Serialize data values that are dicts or lists
+    for key, value in data.items():
+        if isinstance(value, (dict, list)):
+            data[key] = json.dumps(value)
 
     # Add columns dynamically if they do not exist
     for key, value in data.items():
         if key not in existing_columns:
             if isinstance(value, str):
-                add_column(table, key, 'string')
+                add_column(key, 'string')
             elif isinstance(value, int):
-                add_column(table, key, 'integer')
+                add_column(key, 'integer')
             elif isinstance(value, float):
-                add_column(table, key, 'float')
+                add_column(key, 'float')
             elif isinstance(value, datetime):
-                add_column(table, key, 'datetime')
-
-    # Serialize complex data structures to JSON strings
-    for key, value in data.items():
-        if isinstance(value, (dict, list)):
-            data[key] = json.dumps(value)
+                add_column(key, 'datetime')
 
     # Ensure the columns are ordered correctly
     columns = ", ".join(data.keys())
@@ -127,68 +102,34 @@ def insert_data(table, data):
     values = list(data.values())
 
     # Build the insert query
-    query = f"INSERT INTO {table} ({columns}) VALUES ({placeholders})"
-    logging.debug(f"Executing query on {table}: {query}")
+    query = f"INSERT INTO Charger_to_CMS ({columns}) VALUES ({placeholders})"
+    logging.debug(f"Executing query: {query}")
     logging.debug(f"With values: {values}")
 
     # Execute the insert query
     db.execute_sql(query, values)
 
-def store_ocpp_message(charger_id, message_type, message_category, **kwargs):
-    original_message_time = kwargs.get('original_message_time', None)
-    if original_message_time:
-        original_message_time = convert_to_ist(original_message_time)
+def get_ist_time():
+    utc_time = datetime.now(timezone.utc)
+    ist_time = utc_time + timedelta(hours=5, minutes=30)
+    return ist_time
 
+# Function to format and store messages and acknowledgments from Chargers to CMS
+def store_ocpp_message(charger_id, message_type, message_category, **kwargs):
     data = {
         "message_type": message_type,
         "charger_id": charger_id,
         "message_category": message_category,
         "original_message_type": kwargs.get('original_message_type', None) if message_category == 'Acknowledgment' else None,
-        "original_message_time": original_message_time,
-        "timestamp": get_ist_time(),
+        "original_message_time": kwargs.get('original_message_time', None) if message_category == 'Acknowledgment' else None,
+        "timestamp": get_ist_time()
     }
     logging.debug(f"Store OCPP message data: {data}")
 
     # Add additional columns dynamically
     data.update(kwargs)
     
-    insert_data('Charger_to_CMS', data)
-    ocpp_message = Charger_to_CMS.create(**data)
-    ocpp_message.save()  # Ensure the main record is saved
-    return ocpp_message
-
-def parse_and_store_acknowledgment(charger_id, message_type, original_message_type, original_message_time, **kwargs):
-    ocpp_message = store_ocpp_message(charger_id, message_type, "Acknowledgment", original_message_type=original_message_type, original_message_time=convert_to_ist(original_message_time), **kwargs)
-
-    ack_data = {
-        "ocpp_message": ocpp_message.id,
-        "status": kwargs.get('status'),
-        "file_name": kwargs.get('fileName')
-    }
-    insert_data('Charger_to_CMS_Acknowledgment', ack_data)
-
-def parse_and_store_meter_values(charger_id, connector_id, transaction_id, meter_value, **kwargs):
-    message_type = "MeterValues"
-    ocpp_message = store_ocpp_message(charger_id, message_type, "Request", connector_id=connector_id, transaction_id=transaction_id)
-
-    for value in meter_value:
-        meter_value_data = {
-            "ocpp_message": ocpp_message.id,
-            "timestamp": convert_to_ist(value['timestamp']),
-            "connector_id": connector_id,
-            "transaction_id": transaction_id
-        }
-        ocpp_message.save()  # Ensure the main record is saved
-        insert_data('Charger_to_CMS_MeterValue', meter_value_data)
-        meter_value_record = Charger_to_CMS_MeterValue.get(Charger_to_CMS_MeterValue.ocpp_message == ocpp_message.id, Charger_to_CMS_MeterValue.timestamp == meter_value_data['timestamp'])
-
-        for sampled in value['sampledValue']:
-            sampled_value_data = {
-                "meter_value": meter_value_record.id
-            }
-            # Add dynamic columns for sampled values
-            sampled_value_data.update(sampled)
-            insert_data('Charger_to_CMS_SampledValue', sampled_value_data)
+    insert_data(data)
 
 # Example functions for specific message types
 def parse_and_store_boot_notification(charger_id, **kwargs):
@@ -205,25 +146,11 @@ def parse_and_store_start_transaction(charger_id, **kwargs):
 
 def parse_and_store_stop_transaction(charger_id, **kwargs):
     message_type = "StopTransaction"
-    ocpp_message = store_ocpp_message(charger_id, message_type, "Request", **kwargs)
+    store_ocpp_message(charger_id, message_type, "Request", **kwargs)
 
-    transaction_data = kwargs.get('transactionData', [])
-    for data in transaction_data:
-        meter_value_data = {
-            "ocpp_message": ocpp_message.id,
-            "timestamp": convert_to_ist(data['timestamp']),
-        }
-        ocpp_message.save()  # Ensure the main record is saved
-        insert_data('Charger_to_CMS_MeterValue', meter_value_data)
-        meter_value_record = Charger_to_CMS_MeterValue.get(Charger_to_CMS_MeterValue.ocpp_message == ocpp_message.id, Charger_to_CMS_MeterValue.timestamp == meter_value_data['timestamp'])
-
-        for sampled in data['sampledValue']:
-            sampled_value_data = {
-                "meter_value": meter_value_record.id
-            }
-            # Add dynamic columns for sampled values
-            sampled_value_data.update(sampled)
-            insert_data('Charger_to_CMS_SampledValue', sampled_value_data)
+def parse_and_store_meter_values(charger_id, **kwargs):
+    message_type = "MeterValues"
+    store_ocpp_message(charger_id, message_type, "Request", **kwargs)
 
 def parse_and_store_status_notification(charger_id, **kwargs):
     message_type = "StatusNotification"
@@ -236,6 +163,9 @@ def parse_and_store_diagnostics_status(charger_id, **kwargs):
 def parse_and_store_firmware_status(charger_id, **kwargs):
     message_type = "FirmwareStatusNotification"
     store_ocpp_message(charger_id, message_type, "Request", **kwargs)
+
+def parse_and_store_acknowledgment(charger_id, message_type, original_message_type, original_message_time, **kwargs):
+    store_ocpp_message(charger_id, message_type, "Acknowledgment", original_message_type=original_message_type, original_message_time=original_message_time, **kwargs)
 
 # Close the database connection when done
 def close_connection():
