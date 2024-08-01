@@ -1,5 +1,6 @@
-from peewee import Model, AutoField, CharField, DateTimeField, MySQLDatabase
+from peewee import Model, AutoField, CharField, DateTimeField, MySQLDatabase, IntegrityError
 from datetime import datetime, timezone, timedelta
+import pytz
 import logging
 import json
 
@@ -26,7 +27,7 @@ class OCPPMessage(BaseModel):
     message_category = CharField()
     original_message_type = CharField(null=True)
     original_message_time = DateTimeField(null=True)
-    timestamp = DateTimeField(default=datetime.utcnow)
+    timestamp = DateTimeField(default=lambda: get_ist_time())
 
     class Meta:
         table_name = 'Charger_to_CMS'
@@ -71,6 +72,16 @@ def flatten_dict(d, parent_key='', sep='_'):
         items.append((parent_key, d))
     return dict(items)
 
+def convert_to_ist(original_time):
+    ist = pytz.timezone('Asia/Kolkata')
+    if original_time.tzinfo is None:
+        # If the original time is naive, assume it is in UTC
+        original_time = pytz.utc.localize(original_time)
+    if original_time.tzinfo == ist:
+        # If the time is already in IST, do not convert
+        return original_time
+    return original_time.astimezone(ist)
+
 def insert_data(data):
     existing_columns = get_existing_columns()
     logging.debug(f"Existing columns: {existing_columns}")
@@ -78,6 +89,19 @@ def insert_data(data):
 
     # Flatten the data
     data = flatten_dict(data)
+
+    # Convert all datetime fields to IST
+    for key, value in data.items():
+        if isinstance(value, str):
+            try:
+                # Attempt to parse datetime from string and convert to IST
+                parsed_time = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                data[key] = convert_to_ist(parsed_time)
+            except ValueError:
+                # If parsing fails, keep the original value
+                pass
+        elif isinstance(value, datetime):
+            data[key] = convert_to_ist(value)
 
     # Serialize data values that are dicts or lists
     for key, value in data.items():
@@ -111,8 +135,7 @@ def insert_data(data):
 
 def get_ist_time():
     utc_time = datetime.now(timezone.utc)
-    ist_time = utc_time + timedelta(hours=5, minutes=30)
-    return ist_time
+    return convert_to_ist(utc_time)
 
 # Function to format and store messages and acknowledgments from Chargers to CMS
 def store_ocpp_message(charger_id, message_type, message_category, **kwargs):
@@ -121,7 +144,7 @@ def store_ocpp_message(charger_id, message_type, message_category, **kwargs):
         "charger_id": charger_id,
         "message_category": message_category,
         "original_message_type": kwargs.get('original_message_type', None) if message_category == 'Acknowledgment' else None,
-        "original_message_time": kwargs.get('original_message_time', None) if message_category == 'Acknowledgment' else None,
+        "original_message_time": convert_to_ist(kwargs.get('original_message_time')) if message_category == 'Acknowledgment' and kwargs.get('original_message_time') else None,
         "timestamp": get_ist_time()
     }
     logging.debug(f"Store OCPP message data: {data}")

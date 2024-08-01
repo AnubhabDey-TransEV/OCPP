@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone as dt_timezone
+from pytz import timezone
 from ocpp.routing import on
 from ocpp.v16 import call, call_result, ChargePoint as CP
 import Chargers_to_CMS_Parser as parser_c2c
@@ -14,8 +15,9 @@ class ChargePoint(CP):
         self.charger_id = id  # Store Charger_ID
 
     def currdatetime(self):
-        utc_time = datetime.now(timezone.utc)
-        ist_time = utc_time + timedelta(hours=5, minutes=30)
+        utc_time = datetime.now(dt_timezone.utc)
+        ist = timezone('Asia/Kolkata')
+        ist_time = utc_time.astimezone(ist)
         return ist_time.isoformat()
     
     # Inbound messages from chargers to CMS

@@ -1,11 +1,11 @@
 import requests
 import json
-from peewee import MySQLDatabase, Model, CharField, FloatField, BooleanField, IntegerField, TextField
+from peewee import MySQLDatabase, Model, TextField, FloatField, BooleanField, IntegerField, SQL
 
-response = requests.get(
-    url='https://evchargercmsbackend.onrender.com/admin/listofcharges'
-)
+# Fetch JSON data from the API endpoint
+response = requests.get('https://evchargercmsbackend.onrender.com/admin/listofcharges')
 
+# Connect to the MySQL database
 database = MySQLDatabase(
     'OCPP',
     user='ocpphandler',
@@ -17,8 +17,10 @@ database = MySQLDatabase(
 class BaseModel(Model):
     class Meta:
         database = database
+        table_name = 'Admin_Data'
 
-def create_dynamic_model(table_name, columns):
+# Create a function to determine field types dynamically
+def create_dynamic_model(columns):
     fields = {
         'id': IntegerField(primary_key=True)
     }
@@ -33,16 +35,39 @@ def create_dynamic_model(table_name, columns):
         else:
             fields[column_name] = TextField(null=True)
     
-    dynamic_model = type(table_name, (BaseModel,), fields)
+    dynamic_model = type('Admin_Data', (BaseModel,), fields)
     return dynamic_model
 
+# Add missing columns to the existing table
+def add_missing_columns(model, columns):
+    existing_columns = {field.name for field in model._meta.sorted_fields}
+
+    with database.atomic():
+        for column_name, value in columns.items():
+            if column_name not in existing_columns:
+                if isinstance(value, int):
+                    field = IntegerField(null=True)
+                elif isinstance(value, float):
+                    field = FloatField(null=True)
+                elif isinstance(value, bool):
+                    field = BooleanField(null=True)
+                else:
+                    field = TextField(null=True)
+                
+                # Add the new column to the model
+                field.add_to_class(model, column_name)
+                
+                # Add the new column to the database
+                database.execute_sql(f'ALTER TABLE {model._meta.table_name} ADD COLUMN {column_name} {field.ddl()}')
+
+# Load JSON data
 json_data = json.loads(response.content)
 
 # Extract columns from the first JSON object
 columns = json_data[0]
 
-# Create a dynamic model
-DynamicModel = create_dynamic_model('DynamicCharger', columns)
+# Create a dynamic model for the Admin_Data table
+DynamicModel = create_dynamic_model(columns)
 
 # Connect to the database
 database.connect()
@@ -50,10 +75,14 @@ database.connect()
 # Create the table if it doesn't exist
 if not DynamicModel.table_exists():
     DynamicModel.create_table()
+else:
+    # Add any missing columns to the existing table
+    add_missing_columns(DynamicModel, columns)
 
 # Insert data
-for item in json_data:
-    DynamicModel.create(**item)
+with database.atomic():
+    for item in json_data:
+        DynamicModel.create(**item)
 
 # Close the database connection
 database.close()
