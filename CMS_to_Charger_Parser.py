@@ -1,5 +1,5 @@
 from peewee import Model, AutoField, CharField, DateTimeField, MySQLDatabase, IntegrityError
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import pytz
 import logging
 import json
@@ -27,7 +27,7 @@ class OCPPMessage(BaseModel):
     message_category = CharField()
     original_message_type = CharField(null=True)
     original_message_time = DateTimeField(null=True)
-    timestamp = DateTimeField(default=lambda: get_ist_time())
+    timestamp = DateTimeField(default=lambda: datetime.now(timezone.utc))
 
     class Meta:
         table_name = 'CMS_to_Charger'
@@ -50,77 +50,75 @@ def add_column(column_name, column_type):
             db.execute_sql(f'ALTER TABLE CMS_to_Charger ADD COLUMN {column_name} FLOAT')
         elif column_type == 'datetime':
             db.execute_sql(f'ALTER TABLE CMS_to_Charger ADD COLUMN {column_name} DATETIME')
+        logging.debug(f"Added column {column_name} of type {column_type}")
     except Exception as e:
         logging.error(f"Error adding column {column_name}: {e}")
 
 def flatten_dict(d, parent_key='', sep='_'):
     items = []
-    if isinstance(d, dict):
-        for k, v in d.items():
-            new_key = f"{parent_key}{sep}{k}" if parent_key else k
-            if isinstance(v, dict):
-                items.extend(flatten_dict(v, new_key, sep=sep).items())
-            elif isinstance(v, list):
-                for i, sub_dict in enumerate(v):
-                    if isinstance(sub_dict, dict):
-                        items.extend(flatten_dict(sub_dict, f"{new_key}{sep}{i}", sep=sep).items())
-                    else:
-                        items.append((f"{new_key}{sep}{i}", sub_dict))
-            else:
-                items.append((new_key, v))
-    else:
-        items.append((parent_key, d))
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        elif isinstance(v, list):
+            for i, sub_dict in enumerate(v):
+                if isinstance(sub_dict, dict):
+                    items.extend(flatten_dict(sub_dict, f"{new_key}{sep}{i}", sep=sep).items())
+                else:
+                    items.append((f"{new_key}{sep}{i}", sub_dict))
+        else:
+            items.append((new_key, v))
     return dict(items)
 
 def convert_to_ist(original_time):
     ist = pytz.timezone('Asia/Kolkata')
-    
-    if isinstance(original_time, str):
-        try:
-            # Attempt to parse the datetime string
+    try:
+        if isinstance(original_time, str):
             original_time = datetime.fromisoformat(original_time.replace("Z", "+00:00"))
-        except ValueError:
-            logging.error(f"Failed to parse datetime string: {original_time}")
-            return None
 
-    if original_time.tzinfo is None:
-        # If the original time is naive, assume it is in UTC
-        original_time = pytz.utc.localize(original_time)
-    elif original_time.tzinfo != ist:
-        # If the time is not in IST, convert it to IST
-        original_time = original_time.astimezone(ist)
+        if original_time.tzinfo is None:
+            original_time = pytz.utc.localize(original_time)
+        elif original_time.tzinfo != ist:
+            original_time = original_time.astimezone(ist)
         
-    return original_time
+        return original_time.isoformat()
+    except Exception as e:
+        logging.error(f"Failed to convert time to IST: {e}")
+        return None
 
 def insert_data(data):
-    existing_columns = get_existing_columns()
-    logging.debug(f"Existing columns: {existing_columns}")
-    logging.debug(f"Data to insert: {data}")
+    try:
+        existing_columns = get_existing_columns()
+        logging.debug(f"Existing columns: {existing_columns}")
+        logging.debug(f"Data to insert: {data}")
 
-    # Flatten the data
-    data = flatten_dict(data)
+        # Flatten the data
+        data = flatten_dict(data)
 
-    # Convert all datetime fields to IST
-    for key, value in data.items():
-        if isinstance(value, str):
-            try:
-                # Attempt to parse datetime from string and convert to IST
-                parsed_time = datetime.fromisoformat(value.replace("Z", "+00:00"))
-                data[key] = convert_to_ist(parsed_time)
-            except ValueError:
-                # If parsing fails, keep the original value
-                pass
-        elif isinstance(value, datetime):
-            data[key] = convert_to_ist(value)
+        # Convert all datetime fields to IST
+        for key, value in data.items():
+            if isinstance(value, str):
+                try:
+                    parsed_time = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                    data[key] = convert_to_ist(parsed_time)
+                except ValueError:
+                    pass
+            elif isinstance(value, datetime):
+                data[key] = convert_to_ist(value)
 
-    # Serialize data values that are dicts or lists
-    for key, value in data.items():
-        if isinstance(value, (dict, list)):
-            data[key] = json.dumps(value)
+        # Serialize data values that are dicts or lists
+        for key, value in data.items():
+            if isinstance(value, (dict, list)):
+                data[key] = json.dumps(value)
 
-    # Add columns dynamically if they do not exist
-    for key, value in data.items():
-        if key not in existing_columns:
+        # Add columns dynamically if they do not exist
+        columns_to_add = []
+        for key, value in data.items():
+            if key not in existing_columns:
+                columns_to_add.append((key, value))
+
+        # Add new columns
+        for key, value in columns_to_add:
             if isinstance(value, str):
                 add_column(key, 'string')
             elif isinstance(value, int):
@@ -130,24 +128,26 @@ def insert_data(data):
             elif isinstance(value, datetime):
                 add_column(key, 'datetime')
 
-    # Ensure the columns are ordered correctly
-    columns = ", ".join(data.keys())
-    placeholders = ", ".join(["%s"] * len(data))
-    values = list(data.values())
+        # Ensure the new columns are added before proceeding with the insertion
+        existing_columns = get_existing_columns()
+        logging.debug(f"Refreshed columns: {existing_columns}")
 
-    # Build the insert query
-    query = f"INSERT INTO CMS_to_Charger ({columns}) VALUES ({placeholders})"
-    logging.debug(f"Executing query: {query}")
-    logging.debug(f"With values: {values}")
+        columns = ", ".join(data.keys())
+        placeholders = ", ".join(["%s"] * len(data))
+        values = list(data.values())
 
-    # Execute the insert query
-    db.execute_sql(query, values)
+        query = f"INSERT INTO CMS_to_Charger ({columns}) VALUES ({placeholders})"
+        logging.debug(f"Executing query: {query}")
+        logging.debug(f"With values: {values}")
+
+        db.execute_sql(query, values)
+    except Exception as e:
+        logging.error(f"Error inserting data: {e}")
 
 def get_ist_time():
     utc_time = datetime.now(timezone.utc)
     return convert_to_ist(utc_time)
 
-# Function to format and store messages and acknowledgments from CMS to Charger
 def store_ocpp_message(charger_id, message_type, message_category, **kwargs):
     data = {
         "message_type": message_type,
@@ -161,7 +161,7 @@ def store_ocpp_message(charger_id, message_type, message_category, **kwargs):
 
     # Add additional columns dynamically
     data.update(kwargs)
-    
+
     insert_data(data)
 
 # Example functions for specific message types
@@ -201,9 +201,17 @@ def parse_and_store_reset(charger_id, **kwargs):
     message_type = "Reset"
     store_ocpp_message(charger_id, message_type, "Request", **kwargs)
 
+def parse_and_store_get_meter_values(charger_id, **kwargs):
+    message_type = "GetMeterValues"
+    store_ocpp_message(charger_id, message_type, "Request", **kwargs)
+
 def parse_and_store_acknowledgment(charger_id, message_type, original_message_type, original_message_time, **kwargs):
     store_ocpp_message(charger_id, message_type, "Acknowledgment", original_message_type=original_message_type, original_message_time=original_message_time, **kwargs)
 
 # Close the database connection when done
 def close_connection():
-    db.close()
+    try:
+        db.close()
+        logging.debug("Database connection closed successfully.")
+    except Exception as e:
+        logging.error(f"Error closing database connection: {e}")

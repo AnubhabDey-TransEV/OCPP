@@ -2,8 +2,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone as dt_timezone
 from pytz import timezone
-from ocpp.routing import on
 from ocpp.v16 import call, call_result, ChargePoint as CP
+from ocpp.routing import on
 import Chargers_to_CMS_Parser as parser_c2c
 import CMS_to_Charger_Parser as parser_ctc
 
@@ -13,6 +13,7 @@ class ChargePoint(CP):
     def __init__(self, id, websocket):
         super().__init__(id, websocket)
         self.charger_id = id  # Store Charger_ID
+        self.transaction_id = None
 
     def currdatetime(self):
         utc_time = datetime.now(dt_timezone.utc)
@@ -28,7 +29,7 @@ class ChargePoint(CP):
 
         response = call_result.BootNotification(
             current_time=self.currdatetime(),
-            interval=300,
+            interval=10,
             status='Accepted'
         )
         parser_ctc.parse_and_store_acknowledgment(self.charger_id, "BootNotification", "BootNotification", self.currdatetime(), status='Accepted')
@@ -46,15 +47,16 @@ class ChargePoint(CP):
     @on('StartTransaction')
     async def on_start_transaction(self, **kwargs):
         logging.debug(f"Received StartTransaction with kwargs: {kwargs}")
+        self.transaction_id = kwargs.get('transactionId')
         parser_c2c.parse_and_store_start_transaction(self.charger_id, **kwargs)
 
         response = call_result.StartTransaction(
-            transaction_id=1,
+            transaction_id=self.transaction_id,
             id_tag_info={
                 'status': 'Accepted'
             }
         )
-        parser_ctc.parse_and_store_acknowledgment(self.charger_id, "StartTransaction", "StartTransaction", self.currdatetime(), transaction_id=1, status='Accepted')
+        parser_ctc.parse_and_store_acknowledgment(self.charger_id, "StartTransaction", "StartTransaction", self.currdatetime(), transaction_id=self.transaction_id, status='Accepted')
         return response
 
     @on('StopTransaction')
@@ -118,7 +120,7 @@ class ChargePoint(CP):
         logging.debug(f"RemoteStartTransaction response: {response}")
 
         parser_ctc.parse_and_store_remote_start_transaction(self.charger_id, id_tag=id_tag, connector_id=connector_id)
-        parser_c2c.parse_and_store_acknowledgment(self.charger_id, "RemoteStartTransaction", "RemoteStartTransaction", self.currdatetime(), transaction_id=response.transaction_id, status=response.status)
+        parser_c2c.parse_and_store_acknowledgment(self.charger_id, "RemoteStartTransaction", "RemoteStartTransaction", self.currdatetime(), status=response.status)
         return response
 
     async def remote_stop_transaction(self, transaction_id):
@@ -228,4 +230,17 @@ class ChargePoint(CP):
 
         parser_ctc.parse_and_store_reset(self.charger_id, type=type)
         parser_c2c.parse_and_store_acknowledgment(self.charger_id, "Reset", "Reset", self.currdatetime(), status=response.status)
+        return response
+
+    async def get_meter_values(self, connector_id):
+        logging.debug(f"Sending GetMeterValues: connector_id {connector_id}")
+        request = call.GetMeterValues(
+            connector_id=connector_id
+        )
+
+        response = await self.call(request)
+        logging.debug(f"GetMeterValues response: {response}")
+
+        parser_ctc.parse_and_store_get_meter_values(self.charger_id, connector_id=connector_id)
+        parser_c2c.parse_and_store_acknowledgment(self.charger_id, "GetMeterValues", "GetMeterValues", self.currdatetime(), status=response.status)
         return response

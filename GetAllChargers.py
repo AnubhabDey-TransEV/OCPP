@@ -17,7 +17,7 @@ database = MySQLDatabase(
 class BaseModel(Model):
     class Meta:
         database = database
-        table_name = 'Admin_Data'
+        table_name = 'Charger_Data'
 
 # Create a function to determine field types dynamically
 def create_dynamic_model(columns):
@@ -35,7 +35,7 @@ def create_dynamic_model(columns):
         else:
             fields[column_name] = TextField(null=True)
     
-    dynamic_model = type('Admin_Data', (BaseModel,), fields)
+    dynamic_model = type('Charger_Data', (BaseModel,), fields)
     return dynamic_model
 
 # Add missing columns to the existing table

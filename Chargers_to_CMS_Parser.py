@@ -1,5 +1,5 @@
 from peewee import Model, AutoField, CharField, DateTimeField, MySQLDatabase, IntegrityError
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import pytz
 import logging
 import json
@@ -55,32 +55,31 @@ def add_column(column_name, column_type):
 
 def flatten_dict(d, parent_key='', sep='_'):
     items = []
-    if isinstance(d, dict):
-        for k, v in d.items():
-            new_key = f"{parent_key}{sep}{k}" if parent_key else k
-            if isinstance(v, dict):
-                items.extend(flatten_dict(v, new_key, sep=sep).items())
-            elif isinstance(v, list):
-                for i, sub_dict in enumerate(v):
-                    if isinstance(sub_dict, dict):
-                        items.extend(flatten_dict(sub_dict, f"{new_key}{sep}{i}", sep=sep).items())
-                    else:
-                        items.append((f"{new_key}{sep}{i}", sub_dict))
-            else:
-                items.append((new_key, v))
-    else:
-        items.append((parent_key, d))
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        elif isinstance(v, list):
+            for i, sub_dict in enumerate(v):
+                if isinstance(sub_dict, dict):
+                    items.extend(flatten_dict(sub_dict, f"{new_key}{sep}{i}", sep=sep).items())
+                else:
+                    items.append((f"{new_key}{sep}{i}", sub_dict))
+        else:
+            items.append((new_key, v))
     return dict(items)
 
 def convert_to_ist(original_time):
     ist = pytz.timezone('Asia/Kolkata')
+    if isinstance(original_time, str):
+        try:
+            original_time = datetime.fromisoformat(original_time.replace("Z", "+00:00"))
+        except ValueError:
+            logging.error(f"Failed to parse datetime string: {original_time}")
+            return None
     if original_time.tzinfo is None:
-        # If the original time is naive, assume it is in UTC
         original_time = pytz.utc.localize(original_time)
-    if original_time.tzinfo == ist:
-        # If the time is already in IST, do not convert
-        return original_time
-    return original_time.astimezone(ist)
+    return original_time.astimezone(ist).isoformat()
 
 def insert_data(data):
     existing_columns = get_existing_columns()
@@ -94,11 +93,9 @@ def insert_data(data):
     for key, value in data.items():
         if isinstance(value, str):
             try:
-                # Attempt to parse datetime from string and convert to IST
                 parsed_time = datetime.fromisoformat(value.replace("Z", "+00:00"))
                 data[key] = convert_to_ist(parsed_time)
             except ValueError:
-                # If parsing fails, keep the original value
                 pass
         elif isinstance(value, datetime):
             data[key] = convert_to_ist(value)
@@ -193,3 +190,4 @@ def parse_and_store_acknowledgment(charger_id, message_type, original_message_ty
 # Close the database connection when done
 def close_connection():
     db.close()
+    logging.debug("Database connection closed successfully.")
