@@ -13,7 +13,10 @@ class ChargePoint(CP):
     def __init__(self, id, websocket):
         super().__init__(id, websocket)
         self.charger_id = id  # Store Charger_ID
-        self.transaction_id = None
+        self.state = {
+            "status": "Inactive",
+            "connectors": {}
+        }
 
     def currdatetime(self):
         utc_time = datetime.now(dt_timezone.utc)
@@ -21,6 +24,23 @@ class ChargePoint(CP):
         ist_time = utc_time.astimezone(ist)
         return ist_time.isoformat()
     
+    def update_connector_state(self, connector_id, status=None, meter_value=None, error_code=None, transaction_id=None):
+        if connector_id not in self.state["connectors"]:
+            self.state["connectors"][connector_id] = {
+                "status": "Unknown",
+                "last_meter_value": None,
+                "error_code": "NoError",
+                "transaction_id": None
+            }
+        if status:
+            self.state["connectors"][connector_id]["status"] = status
+        if meter_value is not None:
+            self.state["connectors"][connector_id]["last_meter_value"] = meter_value
+        if error_code:
+            self.state["connectors"][connector_id]["error_code"] = error_code
+        if transaction_id:
+            self.state["connectors"][connector_id]["transaction_id"] = transaction_id
+            
     # Inbound messages from chargers to CMS
     @on('BootNotification')
     async def on_boot_notification(self, **kwargs):
@@ -47,47 +67,69 @@ class ChargePoint(CP):
     @on('StartTransaction')
     async def on_start_transaction(self, **kwargs):
         logging.debug(f"Received StartTransaction with kwargs: {kwargs}")
-        self.transaction_id = kwargs.get('transactionId')
+        transaction_id = kwargs.get('transaction_id')
+        connector_id = kwargs.get('connector_id')
+        meter_start = kwargs.get('meter_start')
         parser_c2c.parse_and_store_start_transaction(self.charger_id, **kwargs)
 
+        self.state["status"] = "Active"
+        self.update_connector_state(connector_id, status="Charging", meter_value=meter_start, transaction_id=transaction_id)
+
         response = call_result.StartTransaction(
-            transaction_id=self.transaction_id,
+            transaction_id=transaction_id,
             id_tag_info={
                 'status': 'Accepted'
             }
         )
-        parser_ctc.parse_and_store_acknowledgment(self.charger_id, "StartTransaction", "StartTransaction", self.currdatetime(), transaction_id=self.transaction_id, status='Accepted')
+        parser_ctc.parse_and_store_acknowledgment(self.charger_id, "StartTransaction", "StartTransaction", self.currdatetime(), connector_id=connector_id, transaction_id=transaction_id, status='Accepted')
         return response
 
     @on('StopTransaction')
     async def on_stop_transaction(self, **kwargs):
         logging.debug(f"Received StopTransaction with kwargs: {kwargs}")
+        connector_id = kwargs.get('connector_id')
+        transaction_id = kwargs.get('transaction_id')
+        meter_stop = kwargs.get('meter_stop')
         parser_c2c.parse_and_store_stop_transaction(self.charger_id, **kwargs)
+
+        self.state["status"] = "Inactive"
+        self.update_connector_state(connector_id, status="Available", meter_value=meter_stop, transaction_id=transaction_id)
 
         response = call_result.StopTransaction(
             id_tag_info={
                 'status': 'Accepted'
             }
         )
-        parser_ctc.parse_and_store_acknowledgment(self.charger_id, "StopTransaction", "StopTransaction", self.currdatetime(), transaction_id=kwargs.get('transactionId'), status='Accepted')
+        parser_ctc.parse_and_store_acknowledgment(self.charger_id, "StopTransaction", "StopTransaction", self.currdatetime(), connector_id=connector_id, transaction_id=transaction_id, status='Accepted')
         return response
 
     @on('MeterValues')
     async def on_meter_values(self, **kwargs):
         logging.debug(f"Received MeterValues with kwargs: {kwargs}")
+        connector_id = kwargs.get('connector_id')
+        meter_values = kwargs.get('meter_value', [])
         parser_c2c.parse_and_store_meter_values(self.charger_id, **kwargs)
 
+        if meter_values:
+            last_meter_value = meter_values[-1]
+            self.update_connector_state(connector_id, meter_value=last_meter_value)
+
         response = call_result.MeterValues()
-        parser_ctc.parse_and_store_acknowledgment(self.charger_id, "MeterValues", "MeterValues", self.currdatetime())
+        parser_ctc.parse_and_store_acknowledgment(self.charger_id, "MeterValues", "MeterValues", self.currdatetime(), connector_id=connector_id)
         return response
 
     @on('StatusNotification')
     async def on_status_notification(self, **kwargs):
         logging.debug(f"Received StatusNotification with kwargs: {kwargs}")
+        connector_id = kwargs.get('connector_id')
+        status = kwargs.get('status')
+        error_code = kwargs.get('error_code', 'NoError')
         parser_c2c.parse_and_store_status_notification(self.charger_id, **kwargs)
 
+        self.update_connector_state(connector_id, status=status, error_code=error_code)
+
         response = call_result.StatusNotification()
-        parser_ctc.parse_and_store_acknowledgment(self.charger_id, "StatusNotification", "StatusNotification", self.currdatetime())
+        parser_ctc.parse_and_store_acknowledgment(self.charger_id, "StatusNotification", "StatusNotification", self.currdatetime(), connector_id=connector_id)
         return response
 
     @on('DiagnosticsStatusNotification')
@@ -144,7 +186,7 @@ class ChargePoint(CP):
         response = await self.call(request)
         logging.debug(f"ChangeAvailability response: {response}")
 
-        parser_ctc.parse_and_store_change_availability(self.charger_id, connector_id=connector_id, type=type)
+        parser_ctc.parse_and_store_change_availability(self.charger_id, connector_id=connector_id, type=type, status=response.status)
         parser_c2c.parse_and_store_acknowledgment(self.charger_id, "ChangeAvailability", "ChangeAvailability", self.currdatetime(), status=response.status)
         return response
 
@@ -158,7 +200,7 @@ class ChargePoint(CP):
         response = await self.call(request)
         logging.debug(f"ChangeConfiguration response: {response}")
 
-        parser_ctc.parse_and_store_change_configuration(self.charger_id, key=key, value=value)
+        parser_ctc.parse_and_store_change_configuration(self.charger_id, key=key, value=value, status=response.status)
         parser_c2c.parse_and_store_acknowledgment(self.charger_id, "ChangeConfiguration", "ChangeConfiguration", self.currdatetime(), status=response.status)
         return response
 
@@ -169,7 +211,7 @@ class ChargePoint(CP):
         response = await self.call(request)
         logging.debug(f"ClearCache response: {response}")
 
-        parser_ctc.parse_and_store_clear_cache(self.charger_id)
+        parser_ctc.parse_and_store_clear_cache(self.charger_id, status=response.status)
         parser_c2c.parse_and_store_acknowledgment(self.charger_id, "ClearCache", "ClearCache", self.currdatetime(), status=response.status)
         return response
 
@@ -182,7 +224,7 @@ class ChargePoint(CP):
         response = await self.call(request)
         logging.debug(f"UnlockConnector response: {response}")
 
-        parser_ctc.parse_and_store_unlock_connector(self.charger_id, connector_id=connector_id)
+        parser_ctc.parse_and_store_unlock_connector(self.charger_id, connector_id=connector_id, status=response.status)
         parser_c2c.parse_and_store_acknowledgment(self.charger_id, "UnlockConnector", "UnlockConnector", self.currdatetime(), status=response.status)
         return response
 
@@ -199,7 +241,7 @@ class ChargePoint(CP):
         response = await self.call(request)
         logging.debug(f"GetDiagnostics response: {response}")
 
-        parser_ctc.parse_and_store_get_diagnostics(self.charger_id, location=location, start_time=start_time, stop_time=stop_time, retries=retries, retry_interval=retry_interval)
+        parser_ctc.parse_and_store_get_diagnostics(self.charger_id, location=location, start_time=start_time, stop_time=stop_time, retries=retries, retry_interval=retry_interval, status=response.status)
         parser_c2c.parse_and_store_acknowledgment(self.charger_id, "GetDiagnostics", "GetDiagnostics", self.currdatetime(), status=response.status)
         return response
 
@@ -215,7 +257,7 @@ class ChargePoint(CP):
         response = await self.call(request)
         logging.debug(f"UpdateFirmware response: {response}")
 
-        parser_ctc.parse_and_store_update_firmware(self.charger_id, location=location, retrieve_date=retrieve_date, retries=retries, retry_interval=retry_interval)
+        parser_ctc.parse_and_store_update_firmware(self.charger_id, location=location, retrieve_date=retrieve_date, retries=retries, retry_interval=retry_interval, status=response.status)
         parser_c2c.parse_and_store_acknowledgment(self.charger_id, "UpdateFirmware", "UpdateFirmware", self.currdatetime(), status=response.status)
         return response
 
@@ -228,7 +270,7 @@ class ChargePoint(CP):
         response = await self.call(request)
         logging.debug(f"Reset response: {response}")
 
-        parser_ctc.parse_and_store_reset(self.charger_id, type=type)
+        parser_ctc.parse_and_store_reset(self.charger_id, type=type, status=response.status)
         parser_c2c.parse_and_store_acknowledgment(self.charger_id, "Reset", "Reset", self.currdatetime(), status=response.status)
         return response
 
@@ -241,6 +283,6 @@ class ChargePoint(CP):
         response = await self.call(request)
         logging.debug(f"GetMeterValues response: {response}")
 
-        parser_ctc.parse_and_store_get_meter_values(self.charger_id, connector_id=connector_id)
+        parser_ctc.parse_and_store_get_meter_values(self.charger_id, connector_id=connector_id, status=response.status)
         parser_c2c.parse_and_store_acknowledgment(self.charger_id, "GetMeterValues", "GetMeterValues", self.currdatetime(), status=response.status)
         return response

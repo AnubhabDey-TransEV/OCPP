@@ -27,7 +27,7 @@ class OCPPMessage(BaseModel):
     message_category = CharField()
     original_message_type = CharField(null=True)
     original_message_time = DateTimeField(null=True)
-    timestamp = DateTimeField(default=lambda: datetime.now(timezone.utc))
+    timestamp = DateTimeField(default=lambda: get_ist_time())
 
     class Meta:
         table_name = 'CMS_to_Charger'
@@ -50,7 +50,6 @@ def add_column(column_name, column_type):
             db.execute_sql(f'ALTER TABLE CMS_to_Charger ADD COLUMN {column_name} FLOAT')
         elif column_type == 'datetime':
             db.execute_sql(f'ALTER TABLE CMS_to_Charger ADD COLUMN {column_name} DATETIME')
-        logging.debug(f"Added column {column_name} of type {column_type}")
     except Exception as e:
         logging.error(f"Error adding column {column_name}: {e}")
 
@@ -72,53 +71,43 @@ def flatten_dict(d, parent_key='', sep='_'):
 
 def convert_to_ist(original_time):
     ist = pytz.timezone('Asia/Kolkata')
-    try:
-        if isinstance(original_time, str):
+    if isinstance(original_time, str):
+        try:
             original_time = datetime.fromisoformat(original_time.replace("Z", "+00:00"))
-
-        if original_time.tzinfo is None:
-            original_time = pytz.utc.localize(original_time)
-        elif original_time.tzinfo != ist:
-            original_time = original_time.astimezone(ist)
-        
-        return original_time.isoformat()
-    except Exception as e:
-        logging.error(f"Failed to convert time to IST: {e}")
-        return None
+        except ValueError:
+            logging.error(f"Failed to parse datetime string: {original_time}")
+            return None
+    if original_time.tzinfo is None:
+        original_time = pytz.utc.localize(original_time)
+    return original_time.astimezone(ist).isoformat()
 
 def insert_data(data):
-    try:
-        existing_columns = get_existing_columns()
-        logging.debug(f"Existing columns: {existing_columns}")
-        logging.debug(f"Data to insert: {data}")
+    existing_columns = get_existing_columns()
+    logging.debug(f"Existing columns: {existing_columns}")
+    logging.debug(f"Data to insert: {data}")
 
-        # Flatten the data
-        data = flatten_dict(data)
+    # Flatten the data
+    data = flatten_dict(data)
 
-        # Convert all datetime fields to IST
-        for key, value in data.items():
-            if isinstance(value, str):
-                try:
-                    parsed_time = datetime.fromisoformat(value.replace("Z", "+00:00"))
-                    data[key] = convert_to_ist(parsed_time)
-                except ValueError:
-                    pass
-            elif isinstance(value, datetime):
-                data[key] = convert_to_ist(value)
+    # Convert all datetime fields to IST
+    for key, value in data.items():
+        if isinstance(value, str):
+            try:
+                parsed_time = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                data[key] = convert_to_ist(parsed_time)
+            except ValueError:
+                pass
+        elif isinstance(value, datetime):
+            data[key] = convert_to_ist(value)
 
-        # Serialize data values that are dicts or lists
-        for key, value in data.items():
-            if isinstance(value, (dict, list)):
-                data[key] = json.dumps(value)
+    # Serialize data values that are dicts or lists
+    for key, value in data.items():
+        if isinstance(value, (dict, list)):
+            data[key] = json.dumps(value)
 
-        # Add columns dynamically if they do not exist
-        columns_to_add = []
-        for key, value in data.items():
-            if key not in existing_columns:
-                columns_to_add.append((key, value))
-
-        # Add new columns
-        for key, value in columns_to_add:
+    # Add columns dynamically if they do not exist
+    for key, value in data.items():
+        if key not in existing_columns:
             if isinstance(value, str):
                 add_column(key, 'string')
             elif isinstance(value, int):
@@ -128,26 +117,24 @@ def insert_data(data):
             elif isinstance(value, datetime):
                 add_column(key, 'datetime')
 
-        # Ensure the new columns are added before proceeding with the insertion
-        existing_columns = get_existing_columns()
-        logging.debug(f"Refreshed columns: {existing_columns}")
+    # Ensure the columns are ordered correctly
+    columns = ", ".join(data.keys())
+    placeholders = ", ".join(["%s"] * len(data))
+    values = list(data.values())
 
-        columns = ", ".join(data.keys())
-        placeholders = ", ".join(["%s"] * len(data))
-        values = list(data.values())
+    # Build the insert query
+    query = f"INSERT INTO CMS_to_Charger ({columns}) VALUES ({placeholders})"
+    logging.debug(f"Executing query: {query}")
+    logging.debug(f"With values: {values}")
 
-        query = f"INSERT INTO CMS_to_Charger ({columns}) VALUES ({placeholders})"
-        logging.debug(f"Executing query: {query}")
-        logging.debug(f"With values: {values}")
-
-        db.execute_sql(query, values)
-    except Exception as e:
-        logging.error(f"Error inserting data: {e}")
+    # Execute the insert query
+    db.execute_sql(query, values)
 
 def get_ist_time():
     utc_time = datetime.now(timezone.utc)
     return convert_to_ist(utc_time)
 
+# Function to format and store messages and acknowledgments from CMS to Chargers
 def store_ocpp_message(charger_id, message_type, message_category, **kwargs):
     data = {
         "message_type": message_type,
@@ -161,7 +148,7 @@ def store_ocpp_message(charger_id, message_type, message_category, **kwargs):
 
     # Add additional columns dynamically
     data.update(kwargs)
-
+    
     insert_data(data)
 
 # Example functions for specific message types
@@ -210,8 +197,5 @@ def parse_and_store_acknowledgment(charger_id, message_type, original_message_ty
 
 # Close the database connection when done
 def close_connection():
-    try:
-        db.close()
-        logging.debug("Database connection closed successfully.")
-    except Exception as e:
-        logging.error(f"Error closing database connection: {e}")
+    db.close()
+    logging.debug("Database connection closed successfully.")
