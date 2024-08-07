@@ -285,6 +285,31 @@ def get_meter_values():
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         return jsonify({"error": f"An error occurred: {e}"}), 500
+    
+@app.route("/get_configuration", methods=["POST"])
+def get_configuration():
+    data = request.json
+    charge_point_id = data.get('charge_point_id')
+    logging.debug(f"Received request to get configuration: {data}")
+    try:
+        response = run_async(
+            central_system.send_request(
+                charge_point_id=charge_point_id,
+                request_method='get_configuration'
+            )
+        )
+        logging.debug(f"Response from get_configuration: {response}")
+        if isinstance(response, dict) and "error" in response:
+            return jsonify(response), 404
+        return jsonify(response)  # Return the configuration response as JSON
+    except ConnectionClosedError as e:
+        logging.error(f"Connection error: {e}")
+        return jsonify({"error": f"Connection error: {e}"}), 500
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+        return jsonify({"error": f"An error occurred: {e}"}), 500
+
+
 
 @app.route("/status", methods=["POST"])
 def get_charge_point_status():

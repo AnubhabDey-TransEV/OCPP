@@ -43,13 +43,13 @@ def get_existing_columns():
 def add_column(column_name, column_type):
     try:
         if column_type == 'string':
-            db.execute_sql(f'ALTER TABLE Charger_to_CMS ADD COLUMN {column_name} TEXT')
+            db.execute_sql(f'ALTER TABLE Charger_to_CMS ADD COLUMN `{column_name}` TEXT')
         elif column_type == 'integer':
-            db.execute_sql(f'ALTER TABLE Charger_to_CMS ADD COLUMN {column_name} INTEGER')
+            db.execute_sql(f'ALTER TABLE Charger_to_CMS ADD COLUMN `{column_name}` INTEGER')
         elif column_type == 'float':
-            db.execute_sql(f'ALTER TABLE Charger_to_CMS ADD COLUMN {column_name} FLOAT')
+            db.execute_sql(f'ALTER TABLE Charger_to_CMS ADD COLUMN `{column_name}` FLOAT')
         elif column_type == 'datetime':
-            db.execute_sql(f'ALTER TABLE Charger_to_CMS ADD COLUMN {column_name} DATETIME')
+            db.execute_sql(f'ALTER TABLE Charger_to_CMS ADD COLUMN `{column_name}` DATETIME')
     except Exception as e:
         logging.error(f"Error adding column {column_name}: {e}")
 
@@ -117,8 +117,11 @@ def insert_data(data):
             elif isinstance(value, datetime):
                 add_column(key, 'datetime')
 
+    # Re-fetch existing columns to include newly added columns
+    existing_columns = get_existing_columns()  # <-- Key change
+
     # Ensure the columns are ordered correctly
-    columns = ", ".join(data.keys())
+    columns = ", ".join([f"`{col}`" for col in data.keys()])  # <-- Column escaping
     placeholders = ", ".join(["%s"] * len(data))
     values = list(data.values())
 
@@ -136,20 +139,39 @@ def get_ist_time():
 
 # Function to format and store messages and acknowledgments from Chargers to CMS
 def store_ocpp_message(charger_id, message_type, message_category, **kwargs):
-    data = {
-        "message_type": message_type,
-        "charger_id": charger_id,
-        "message_category": message_category,
-        "original_message_type": kwargs.get('original_message_type', None) if message_category == 'Acknowledgment' else None,
-        "original_message_time": convert_to_ist(kwargs.get('original_message_time')) if message_category == 'Acknowledgment' and kwargs.get('original_message_time') else None,
-        "timestamp": get_ist_time()
-    }
-    logging.debug(f"Store OCPP message data: {data}")
+    try:
+        original_message_type = kwargs.get('original_message_type', None)
+        original_message_time = kwargs.get('original_message_time', None)
 
-    # Add additional columns dynamically
-    data.update(kwargs)
-    
-    insert_data(data)
+        # Log the types and values of kwargs
+        logging.debug(f"kwargs received: {kwargs}")
+        logging.debug(f"original_message_type: {type(original_message_type)} = {original_message_type}")
+        logging.debug(f"original_message_time: {type(original_message_time)} = {original_message_time}")
+
+        data = {
+            "message_type": message_type,
+            "charger_id": charger_id,
+            "message_category": message_category,
+            "original_message_type": original_message_type if message_category == 'Acknowledgment' else None,
+            "original_message_time": convert_to_ist(original_message_time) if message_category == 'Acknowledgment' and original_message_time else None,
+            "timestamp": get_ist_time()
+        }
+
+        logging.debug(f"Store OCPP message data before update: {data}")
+
+        # Add additional columns dynamically, ensuring no type issues
+        for key, value in kwargs.items():
+            if key not in data:
+                data[key] = value
+
+        logging.debug(f"Store OCPP message data after update: {data}")
+
+        # Here, implement the logic to store the message (e.g., database storage)
+        insert_data(data)
+        
+    except Exception as e:
+        logging.error(f"An error occurred in store_ocpp_message: {e}")
+        raise
 
 # Example functions for specific message types
 def parse_and_store_boot_notification(charger_id, **kwargs):
@@ -183,6 +205,31 @@ def parse_and_store_diagnostics_status(charger_id, **kwargs):
 def parse_and_store_firmware_status(charger_id, **kwargs):
     message_type = "FirmwareStatusNotification"
     store_ocpp_message(charger_id, message_type, "Request", **kwargs)
+
+def parse_and_store_get_configuration_response(charger_id, configuration_key):
+    message_type = "ConfigurationResponse"
+    for config in configuration_key:
+        key = config.get('key')
+        value = config.get('value')
+        readonly = config.get('readonly')
+        
+        # Log the types and values of key, value, and readonly
+        logging.debug(f"Processing configuration key: {config}")
+        logging.debug(f"Key: {key}, Type: {type(key)}")
+        logging.debug(f"Value: {value}, Type: {type(value)}")
+        logging.debug(f"Readonly: {readonly}, Type: {type(readonly)}")
+        
+        if not isinstance(key, str) or not isinstance(value, (int, float, str)) or not isinstance(readonly, bool):
+            raise ValueError("Invalid data types in configuration_key")
+
+        data = {
+            'key': key,
+            'value': value,
+            'readonly': readonly,
+        }
+        
+        store_ocpp_message(charger_id, message_type, "Response", **data)
+
 
 def parse_and_store_acknowledgment(charger_id, message_type, original_message_type, original_message_time, **kwargs):
     store_ocpp_message(charger_id, message_type, "Acknowledgment", original_message_type=original_message_type, original_message_time=original_message_time, **kwargs)

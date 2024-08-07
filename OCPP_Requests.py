@@ -49,7 +49,7 @@ class ChargePoint(CP):
 
         response = call_result.BootNotification(
             current_time=self.currdatetime(),
-            interval=10,
+            interval=900,
             status='Accepted'
         )
         parser_ctc.parse_and_store_acknowledgment(self.charger_id, "BootNotification", "BootNotification", self.currdatetime(), status='Accepted')
@@ -203,6 +203,29 @@ class ChargePoint(CP):
         parser_ctc.parse_and_store_change_configuration(self.charger_id, key=key, value=value, status=response.status)
         parser_c2c.parse_and_store_acknowledgment(self.charger_id, "ChangeConfiguration", "ChangeConfiguration", self.currdatetime(), status=response.status)
         return response
+
+    async def get_configuration(self):
+        logging.debug(f"Sending GetConfiguration:")
+        request = call.GetConfiguration()
+
+        parser_ctc.parse_and_store_get_configuration(self.charger_id)
+        try:
+            response = await self.call(request)
+            logging.debug(f"GetConfiguration response: {response}")
+
+            # Log the types and values of the configuration keys in the response
+            if hasattr(response, 'configuration_key'):
+                logging.debug(f"Configuration keys: {response.configuration_key}")
+                for config in response.configuration_key:
+                    logging.debug(f"Key: {config.get('key')} Type: {type(config.get('key'))}")
+                    logging.debug(f"Value: {config.get('value')} Type: {type(config.get('value'))}")
+                    logging.debug(f"Readonly: {config.get('readonly')} Type: {type(config.get('readonly'))}")
+
+            parser_c2c.parse_and_store_get_configuration_response(self.charger_id, response.configuration_key)
+            return response
+        except Exception as e:
+            logging.error(f"Error in get_configuration: {e}")
+            raise
 
     async def clear_cache(self):
         logging.debug(f"Sending ClearCache")

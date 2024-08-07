@@ -21,15 +21,6 @@ class CentralSystem:
             logging.error(f"Error handling charge point {charge_point_id}: {e}")
 
     async def send_request(self, charge_point_id, request_method, *args, **kwargs):
-        """
-        Send a request to a specific charge point.
-        
-        :param charge_point_id: ID of the charge point
-        :param request_method: Method to call on the ChargePoint instance
-        :param args: Positional arguments for the request
-        :param kwargs: Keyword arguments for the request
-        :return: Response from the charge point
-        """
         logging.debug(f"Attempting to send request {request_method} to charge point {charge_point_id}")
         charge_point = self.charge_points.get(charge_point_id)
         if not charge_point:
@@ -40,7 +31,13 @@ class CentralSystem:
         if method is None:
             logging.error(f"Request method {request_method} not found on ChargePoint {charge_point_id}.")
             return {"error": f"Request method {request_method} not found"}
-        
+
+        logging.debug(f"Arguments for {request_method}: args = {args}, kwargs = {kwargs}")
+        for arg in args:
+            logging.debug(f"Type of arg: {type(arg)}, value: {arg}")
+        for key, value in kwargs.items():
+            logging.debug(f"Type of kwarg {key}: {type(value)}, value: {value}")
+
         try:
             response = await method(*args, **kwargs)
             logging.info(f"Sent {request_method} to charge point {charge_point_id} with response: {response}")
