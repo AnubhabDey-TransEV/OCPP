@@ -15,11 +15,28 @@ server_thread = threading.Thread(target=loop.run_until_complete, args=(central_s
 server_thread.start()
 
 def run_async(coroutine):
+    """
+    Run the given coroutine in the asyncio event loop running in another thread.
+    
+    Parameters:
+    coroutine (coroutine): The coroutine to run.
+    
+    Returns:
+    The result of the coroutine.
+    """
     future = asyncio.run_coroutine_threadsafe(coroutine, loop)
     return future.result()
 
 @app.route("/change_availability", methods=["POST"])
 def change_availability():
+    """
+    Change the availability of a connector on a charge point.
+    
+    Request JSON should contain:
+    - charge_point_id: ID of the charge point.
+    - connector_id: ID of the connector.
+    - type: Type of availability change (e.g., "Inoperative" or "Operative").
+    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     connector_id = data.get('connector_id')
@@ -47,6 +64,14 @@ def change_availability():
 
 @app.route("/start_transaction", methods=["POST"])
 def start_transaction():
+    """
+    Start a transaction on a charge point.
+    
+    Request JSON should contain:
+    - charge_point_id: ID of the charge point.
+    - id_tag: ID tag for the transaction.
+    - connector_id: ID of the connector.
+    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     id_tag = data.get('id_tag')
@@ -74,6 +99,13 @@ def start_transaction():
 
 @app.route("/stop_transaction", methods=["POST"])
 def stop_transaction():
+    """
+    Stop a transaction on a charge point.
+    
+    Request JSON should contain:
+    - charge_point_id: ID of the charge point.
+    - transaction_id: ID of the transaction.
+    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     transaction_id = data.get('transaction_id')
@@ -99,6 +131,14 @@ def stop_transaction():
 
 @app.route("/change_configuration", methods=["POST"])
 def change_configuration():
+    """
+    Change the configuration of a charge point.
+    
+    Request JSON should contain:
+    - charge_point_id: ID of the charge point.
+    - key: Configuration key to change.
+    - value: New value for the configuration key.
+    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     key = data.get('key')
@@ -126,6 +166,12 @@ def change_configuration():
 
 @app.route("/clear_cache", methods=["POST"])
 def clear_cache():
+    """
+    Clear the cache of a charge point.
+    
+    Request JSON should contain:
+    - charge_point_id: ID of the charge point.
+    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     logging.debug(f"Received request to clear cache: {data}")
@@ -149,6 +195,13 @@ def clear_cache():
 
 @app.route("/unlock_connector", methods=["POST"])
 def unlock_connector():
+    """
+    Unlock a connector on a charge point.
+    
+    Request JSON should contain:
+    - charge_point_id: ID of the charge point.
+    - connector_id: ID of the connector.
+    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     connector_id = data.get('connector_id')
@@ -174,6 +227,17 @@ def unlock_connector():
 
 @app.route("/get_diagnostics", methods=["POST"])
 def get_diagnostics():
+    """
+    Get diagnostics from a charge point.
+    
+    Request JSON should contain:
+    - charge_point_id: ID of the charge point.
+    - location: Location to store the diagnostics file.
+    - start_time: (Optional) Start time for diagnostics.
+    - stop_time: (Optional) Stop time for diagnostics.
+    - retries: (Optional) Number of retries.
+    - retry_interval: (Optional) Interval between retries.
+    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     location = data.get('location')
@@ -207,6 +271,16 @@ def get_diagnostics():
 
 @app.route("/update_firmware", methods=["POST"])
 def update_firmware():
+    """
+    Update the firmware of a charge point.
+    
+    Request JSON should contain:
+    - charge_point_id: ID of the charge point.
+    - location: Location of the firmware file.
+    - retrieve_date: Date to retrieve the firmware.
+    - retries: (Optional) Number of retries.
+    - retry_interval: (Optional) Interval between retries.
+    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     location = data.get('location')
@@ -238,6 +312,13 @@ def update_firmware():
 
 @app.route("/reset", methods=["POST"])
 def reset():
+    """
+    Reset a charge point.
+    
+    Request JSON should contain:
+    - charge_point_id: ID of the charge point.
+    - type: Type of reset (e.g., "Hard" or "Soft").
+    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     type = data.get('type')
@@ -263,6 +344,13 @@ def reset():
 
 @app.route("/get_meter_values", methods=["POST"])
 def get_meter_values():
+    """
+    Get meter values from a charge point.
+    
+    Request JSON should contain:
+    - charge_point_id: ID of the charge point.
+    - connector_id: ID of the connector.
+    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     connector_id = data.get('connector_id')
@@ -285,9 +373,15 @@ def get_meter_values():
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         return jsonify({"error": f"An error occurred: {e}"}), 500
-    
+
 @app.route("/get_configuration", methods=["POST"])
 def get_configuration():
+    """
+    Get the configuration of a charge point.
+    
+    Request JSON should contain:
+    - charge_point_id: ID of the charge point.
+    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     logging.debug(f"Received request to get configuration: {data}")
@@ -309,22 +403,60 @@ def get_configuration():
         logging.error(f"An error occurred: {e}")
         return jsonify({"error": f"An error occurred: {e}"}), 500
 
-
-
 @app.route("/status", methods=["POST"])
 def get_charge_point_status():
+    """
+    Get the current status of charge points. If charge_point_id is provided, return the status of that charge point.
+    If charge_point_id is "all_online", return the status of all online charge points.
+    Otherwise, return the status of all connected charge points.
+
+    Request JSON should optionally contain:
+    - charge_point_id: (Optional) ID of the charge point.
+    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
-    charge_point = central_system.charge_points.get(charge_point_id)
-    if not charge_point:
-        return jsonify({"error": "Charge point not found"}), 404
+    
+    if charge_point_id == "all_online":
+        all_online_statuses = {}
+        for cp_id, charge_point in central_system.charge_points.items():
+            if charge_point.online:
+                online_status = "Online (with error)" if charge_point.has_error else "Online"
+                all_online_statuses[cp_id] = {
+                    "status": charge_point.state["status"],
+                    "connectors": charge_point.state["connectors"],
+                    "online": online_status,
+                    "last_message_received_time": charge_point.last_message_time.isoformat()
+                }
+        return jsonify(all_online_statuses)
 
-    # Return the current state of the charge point
-    return jsonify({
-        "charger_id": charge_point_id,
-        "status": charge_point.state["status"],
-        "connectors": charge_point.state["connectors"]
-    })
+    if charge_point_id:
+        charge_point = central_system.charge_points.get(charge_point_id)
+        if not charge_point:
+            return jsonify({"error": "Charge point not found"}), 404
+
+        online_status = "Online (with error)" if charge_point.online and charge_point.has_error else "Online" if charge_point.online else "Offline"
+
+        # Return the current state of the specific charge point
+        return jsonify({
+            "charger_id": charge_point_id,
+            "status": charge_point.state["status"],
+            "connectors": charge_point.state["connectors"],
+            "online": online_status,
+            "last_message_received_time": charge_point.last_message_time.isoformat()
+        })
+    else:
+        # Return the current state of all connected charge points
+        all_statuses = {}
+        for cp_id, charge_point in central_system.charge_points.items():
+            online_status = "Online (with error)" if charge_point.online and charge_point.has_error else "Online" if charge_point.online else "Offline"
+            all_statuses[cp_id] = {
+                "status": charge_point.state["status"],
+                "connectors": charge_point.state["connectors"],
+                "online": online_status,
+                "last_message_received_time": charge_point.last_message_time.isoformat()
+            }
+        return jsonify(all_statuses)
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
