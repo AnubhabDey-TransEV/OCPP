@@ -6,6 +6,7 @@ from ocpp.v16 import call, call_result, ChargePoint as CP
 from ocpp.routing import on
 import Chargers_to_CMS_Parser as parser_c2c
 import CMS_to_Charger_Parser as parser_ctc
+from models import Transaction
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -33,12 +34,19 @@ class ChargePoint(CP):
             self.state["connectors"][connector_id] = {
                 "status": "Unknown",
                 "last_meter_value": None,
+                "last_transaction_consumption_kwh": 0.0,  # Track last transaction consumption per connector
                 "error_code": "NoError",
                 "transaction_id": None
             }
         if status:
             self.state["connectors"][connector_id]["status"] = status
         if meter_value is not None:
+            if self.state["connectors"][connector_id]["transaction_id"] != transaction_id:
+                initial_meter_value = self.state["connectors"][connector_id]["last_meter_value"]
+                if initial_meter_value and meter_value:
+                    consumption_kwh = (meter_value - initial_meter_value) / 1000.0  # Convert Wh to kWh
+                    self.state["connectors"][connector_id]["last_transaction_consumption_kwh"] = consumption_kwh
+                    logging.info(f"Connector {connector_id} last transaction consumed {consumption_kwh:.3f} kWh.")
             self.state["connectors"][connector_id]["last_meter_value"] = meter_value
         if error_code:
             self.state["connectors"][connector_id]["error_code"] = error_code
@@ -103,6 +111,16 @@ class ChargePoint(CP):
         meter_start = kwargs.get('meter_start')
         parser_c2c.parse_and_store_start_transaction(self.charger_id, **kwargs)
 
+        # Create a new transaction record
+        transaction_record = Transaction.create(
+            charger_id=self.charger_id,
+            connector_id=connector_id,
+            meter_start=meter_start,
+            start_time=datetime.now()
+        )
+        self.update_transaction_id(connector_id, transaction_id)
+        # Store the transaction record ID in the connector state if needed
+        self.state["connectors"][connector_id]["transaction_record_id"] = transaction_record.id
         self.state["status"] = "Active"
         self.update_connector_state(connector_id, status="Charging", meter_value=meter_start, transaction_id=transaction_id)
 
@@ -122,8 +140,18 @@ class ChargePoint(CP):
         connector_id = kwargs.get('connector_id')
         transaction_id = kwargs.get('transaction_id')
         meter_stop = kwargs.get('meter_stop')
-        parser_c2c.parse_and_store_stop_transaction(self.charger_id, **kwargs)
+        
+        # Retrieve the transaction record ID from the connector state
+        transaction_record_id = self.state["connectors"][connector_id].get("transaction_record_id")
+        if transaction_record_id:
+            # Update the transaction record with stop meter value and total consumption
+            transaction_record = Transaction.get_by_id(transaction_record_id)
+            transaction_record.meter_stop = meter_stop
+            transaction_record.stop_time = datetime.now()
+            transaction_record.total_consumption = meter_stop - transaction_record.meter_start
+            transaction_record.save()
 
+        parser_c2c.parse_and_store_stop_transaction(self.charger_id, **kwargs)
         self.state["status"] = "Inactive"
         self.update_connector_state(connector_id, status="Available", meter_value=meter_stop, transaction_id=None)
 

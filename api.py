@@ -402,7 +402,7 @@ def get_configuration():
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         return jsonify({"error": f"An error occurred: {e}"}), 500
-
+    
 @app.route("/status", methods=["POST"])
 def get_charge_point_status():
     """
@@ -421,9 +421,20 @@ def get_charge_point_status():
         for cp_id, charge_point in central_system.charge_points.items():
             if charge_point.online:
                 online_status = "Online (with error)" if charge_point.has_error else "Online"
+                connectors = charge_point.state["connectors"]
+                connectors_status = {
+                    conn_id: {
+                        "status": conn_state["status"],
+                        "last_meter_value": conn_state.get("last_meter_value"),
+                        "last_transaction_consumption_kwh": conn_state.get("last_transaction_consumption_kwh", 0),
+                        "error_code": conn_state.get("error_code", "NoError"),
+                        "transaction_id": conn_state.get("transaction_id")
+                    }
+                    for conn_id, conn_state in connectors.items()
+                }
                 all_online_statuses[cp_id] = {
                     "status": charge_point.state["status"],
-                    "connectors": charge_point.state["connectors"],
+                    "connectors": connectors_status,
                     "online": online_status,
                     "last_message_received_time": charge_point.last_message_time.isoformat()
                 }
@@ -435,12 +446,23 @@ def get_charge_point_status():
             return jsonify({"error": "Charge point not found"}), 404
 
         online_status = "Online (with error)" if charge_point.online and charge_point.has_error else "Online" if charge_point.online else "Offline"
+        connectors = charge_point.state["connectors"]
+        connectors_status = {
+            conn_id: {
+                "status": conn_state["status"],
+                "last_meter_value": conn_state.get("last_meter_value"),
+                "last_transaction_consumption_kwh": conn_state.get("last_transaction_consumption_kwh", 0),
+                "error_code": conn_state.get("error_code", "NoError"),
+                "transaction_id": conn_state.get("transaction_id")
+            }
+            for conn_id, conn_state in connectors.items()
+        }
 
         # Return the current state of the specific charge point
         return jsonify({
             "charger_id": charge_point_id,
             "status": charge_point.state["status"],
-            "connectors": charge_point.state["connectors"],
+            "connectors": connectors_status,
             "online": online_status,
             "last_message_received_time": charge_point.last_message_time.isoformat()
         })
@@ -449,14 +471,24 @@ def get_charge_point_status():
         all_statuses = {}
         for cp_id, charge_point in central_system.charge_points.items():
             online_status = "Online (with error)" if charge_point.online and charge_point.has_error else "Online" if charge_point.online else "Offline"
+            connectors = charge_point.state["connectors"]
+            connectors_status = {
+                conn_id: {
+                    "status": conn_state["status"],
+                    "last_meter_value": conn_state.get("last_meter_value"),
+                    "last_transaction_consumption_kwh": conn_state.get("last_transaction_consumption_kwh", 0),
+                    "error_code": conn_state.get("error_code", "NoError"),
+                    "transaction_id": conn_state.get("transaction_id")
+                }
+                for conn_id, conn_state in connectors.items()
+            }
             all_statuses[cp_id] = {
                 "status": charge_point.state["status"],
-                "connectors": charge_point.state["connectors"],
+                "connectors": connectors_status,
                 "online": online_status,
                 "last_message_received_time": charge_point.last_message_time.isoformat()
             }
         return jsonify(all_statuses)
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
