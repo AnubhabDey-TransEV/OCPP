@@ -425,10 +425,10 @@ def get_charge_point_status():
                 connectors_status = {
                     conn_id: {
                         "status": conn_state["status"],
-                        "last_meter_value": conn_state.get("last_meter_value"),
-                        "last_transaction_consumption_kwh": conn_state.get("last_transaction_consumption_kwh", 0),
+                        "latest_meter_value": conn_state.get("last_meter_value"),
+                        "latest_transaction_consumption_kwh": conn_state.get("last_transaction_consumption_kwh", 0),
                         "error_code": conn_state.get("error_code", "NoError"),
-                        "transaction_id": conn_state.get("transaction_id")
+                        "latest_transaction_id": conn_state.get("transaction_id")
                     }
                     for conn_id, conn_state in connectors.items()
                 }
@@ -436,7 +436,7 @@ def get_charge_point_status():
                     "status": charge_point.state["status"],
                     "connectors": connectors_status,
                     "online": online_status,
-                    "last_message_received_time": charge_point.last_message_time.isoformat()
+                    "latest_message_received_time": charge_point.last_message_time.isoformat()
                 }
         return jsonify(all_online_statuses)
 
@@ -450,10 +450,10 @@ def get_charge_point_status():
         connectors_status = {
             conn_id: {
                 "status": conn_state["status"],
-                "last_meter_value": conn_state.get("last_meter_value"),
-                "last_transaction_consumption_kwh": conn_state.get("last_transaction_consumption_kwh", 0),
+                "latest_meter_value": conn_state.get("last_meter_value"),
+                "latest_transaction_consumption_kwh": conn_state.get("last_transaction_consumption_kwh", 0),
                 "error_code": conn_state.get("error_code", "NoError"),
-                "transaction_id": conn_state.get("transaction_id")
+                "latest_transaction_id": conn_state.get("transaction_id")
             }
             for conn_id, conn_state in connectors.items()
         }
@@ -464,7 +464,7 @@ def get_charge_point_status():
             "status": charge_point.state["status"],
             "connectors": connectors_status,
             "online": online_status,
-            "last_message_received_time": charge_point.last_message_time.isoformat()
+            "latest_message_received_time": charge_point.last_message_time.isoformat()
         })
     else:
         # Return the current state of all connected charge points

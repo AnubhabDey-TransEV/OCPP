@@ -212,15 +212,21 @@ def parse_and_store_get_configuration_response(charger_id, configuration_key):
         key = config.get('key')
         value = config.get('value')
         readonly = config.get('readonly')
-        
+
         # Log the types and values of key, value, and readonly
         logging.debug(f"Processing configuration key: {config}")
         logging.debug(f"Key: {key}, Type: {type(key)}")
         logging.debug(f"Value: {value}, Type: {type(value)}")
         logging.debug(f"Readonly: {readonly}, Type: {type(readonly)}")
         
-        if not isinstance(key, str) or not isinstance(value, (int, float, str)) or not isinstance(readonly, bool):
+        # Handle None values and other type issues
+        if not isinstance(key, str) or (value is not None and not isinstance(value, (int, float, str))) or not isinstance(readonly, bool):
+            logging.error(f"Invalid data types in configuration_key: {config}")
             raise ValueError("Invalid data types in configuration_key")
+
+        # Default the value to an empty string if it's None
+        if value is None:
+            value = ""
 
         data = {
             'key': key,
