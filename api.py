@@ -4,6 +4,7 @@ import logging
 from websockets.exceptions import ConnectionClosedError
 from websocket_server import CentralSystem
 import threading
+from models import Reservation
 
 app = Flask(__name__)
 central_system = CentralSystem()
@@ -29,14 +30,6 @@ def run_async(coroutine):
 
 @app.route("/change_availability", methods=["POST"])
 def change_availability():
-    """
-    Change the availability of a connector on a charge point.
-    
-    Request JSON should contain:
-    - charge_point_id: ID of the charge point.
-    - connector_id: ID of the connector.
-    - type: Type of availability change (e.g., "Inoperative" or "Operative").
-    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     connector_id = data.get('connector_id')
@@ -64,14 +57,6 @@ def change_availability():
 
 @app.route("/start_transaction", methods=["POST"])
 def start_transaction():
-    """
-    Start a transaction on a charge point.
-    
-    Request JSON should contain:
-    - charge_point_id: ID of the charge point.
-    - id_tag: ID tag for the transaction.
-    - connector_id: ID of the connector.
-    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     id_tag = data.get('id_tag')
@@ -99,13 +84,6 @@ def start_transaction():
 
 @app.route("/stop_transaction", methods=["POST"])
 def stop_transaction():
-    """
-    Stop a transaction on a charge point.
-    
-    Request JSON should contain:
-    - charge_point_id: ID of the charge point.
-    - transaction_id: ID of the transaction.
-    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     transaction_id = data.get('transaction_id')
@@ -131,14 +109,6 @@ def stop_transaction():
 
 @app.route("/change_configuration", methods=["POST"])
 def change_configuration():
-    """
-    Change the configuration of a charge point.
-    
-    Request JSON should contain:
-    - charge_point_id: ID of the charge point.
-    - key: Configuration key to change.
-    - value: New value for the configuration key.
-    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     key = data.get('key')
@@ -166,12 +136,6 @@ def change_configuration():
 
 @app.route("/clear_cache", methods=["POST"])
 def clear_cache():
-    """
-    Clear the cache of a charge point.
-    
-    Request JSON should contain:
-    - charge_point_id: ID of the charge point.
-    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     logging.debug(f"Received request to clear cache: {data}")
@@ -195,13 +159,6 @@ def clear_cache():
 
 @app.route("/unlock_connector", methods=["POST"])
 def unlock_connector():
-    """
-    Unlock a connector on a charge point.
-    
-    Request JSON should contain:
-    - charge_point_id: ID of the charge point.
-    - connector_id: ID of the connector.
-    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     connector_id = data.get('connector_id')
@@ -227,17 +184,6 @@ def unlock_connector():
 
 @app.route("/get_diagnostics", methods=["POST"])
 def get_diagnostics():
-    """
-    Get diagnostics from a charge point.
-    
-    Request JSON should contain:
-    - charge_point_id: ID of the charge point.
-    - location: Location to store the diagnostics file.
-    - start_time: (Optional) Start time for diagnostics.
-    - stop_time: (Optional) Stop time for diagnostics.
-    - retries: (Optional) Number of retries.
-    - retry_interval: (Optional) Interval between retries.
-    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     location = data.get('location')
@@ -271,16 +217,6 @@ def get_diagnostics():
 
 @app.route("/update_firmware", methods=["POST"])
 def update_firmware():
-    """
-    Update the firmware of a charge point.
-    
-    Request JSON should contain:
-    - charge_point_id: ID of the charge point.
-    - location: Location of the firmware file.
-    - retrieve_date: Date to retrieve the firmware.
-    - retries: (Optional) Number of retries.
-    - retry_interval: (Optional) Interval between retries.
-    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     location = data.get('location')
@@ -312,13 +248,6 @@ def update_firmware():
 
 @app.route("/reset", methods=["POST"])
 def reset():
-    """
-    Reset a charge point.
-    
-    Request JSON should contain:
-    - charge_point_id: ID of the charge point.
-    - type: Type of reset (e.g., "Hard" or "Soft").
-    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     type = data.get('type')
@@ -344,13 +273,6 @@ def reset():
 
 @app.route("/get_meter_values", methods=["POST"])
 def get_meter_values():
-    """
-    Get meter values from a charge point.
-    
-    Request JSON should contain:
-    - charge_point_id: ID of the charge point.
-    - connector_id: ID of the connector.
-    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     connector_id = data.get('connector_id')
@@ -376,12 +298,6 @@ def get_meter_values():
 
 @app.route("/get_configuration", methods=["POST"])
 def get_configuration():
-    """
-    Get the configuration of a charge point.
-    
-    Request JSON should contain:
-    - charge_point_id: ID of the charge point.
-    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     logging.debug(f"Received request to get configuration: {data}")
@@ -405,14 +321,6 @@ def get_configuration():
     
 @app.route("/status", methods=["POST"])
 def get_charge_point_status():
-    """
-    Get the current status of charge points. If charge_point_id is provided, return the status of that charge point.
-    If charge_point_id is "all_online", return the status of all online charge points.
-    Otherwise, return the status of all connected charge points.
-
-    Request JSON should optionally contain:
-    - charge_point_id: (Optional) ID of the charge point.
-    """
     data = request.json
     charge_point_id = data.get('charge_point_id')
     
@@ -422,16 +330,35 @@ def get_charge_point_status():
             if charge_point.online:
                 online_status = "Online (with error)" if charge_point.has_error else "Online"
                 connectors = charge_point.state["connectors"]
-                connectors_status = {
-                    conn_id: {
+                connectors_status = {}
+
+                for conn_id, conn_state in connectors.items():
+                    # Find the next valid reservation for this connector
+                    next_reservation = Reservation.select().where(
+                        Reservation.charger_id == cp_id,
+                        Reservation.connector_id == conn_id,
+                        Reservation.status == 'Reserved'
+                    ).order_by(Reservation.expiry_date.asc()).dicts().first()
+
+                    if next_reservation:
+                        next_reservation_info = {
+                            "reservation_id": next_reservation['reservation_id'],
+                            "connector_id": next_reservation['connector_id'],
+                            "from_time": next_reservation['from_time'],
+                            "to_time": next_reservation['to_time']
+                        }
+                    else:
+                        next_reservation_info = None
+
+                    connectors_status[conn_id] = {
                         "status": conn_state["status"],
                         "latest_meter_value": conn_state.get("last_meter_value"),
                         "latest_transaction_consumption_kwh": conn_state.get("last_transaction_consumption_kwh", 0),
                         "error_code": conn_state.get("error_code", "NoError"),
-                        "latest_transaction_id": conn_state.get("transaction_id")
+                        "latest_transaction_id": conn_state.get("transaction_id"),
+                        "next_reservation": next_reservation_info
                     }
-                    for conn_id, conn_state in connectors.items()
-                }
+
                 all_online_statuses[cp_id] = {
                     "status": charge_point.state["status"],
                     "connectors": connectors_status,
@@ -447,18 +374,35 @@ def get_charge_point_status():
 
         online_status = "Online (with error)" if charge_point.online and charge_point.has_error else "Online" if charge_point.online else "Offline"
         connectors = charge_point.state["connectors"]
-        connectors_status = {
-            conn_id: {
+        connectors_status = {}
+
+        for conn_id, conn_state in connectors.items():
+            # Find the next valid reservation for this connector
+            next_reservation = Reservation.select().where(
+                Reservation.charger_id == charge_point_id,
+                Reservation.connector_id == conn_id,
+                Reservation.status == 'Reserved'
+            ).order_by(Reservation.expiry_date.asc()).dicts().first()
+
+            if next_reservation:
+                next_reservation_info = {
+                    "reservation_id": next_reservation['reservation_id'],
+                    "connector_id": next_reservation['connector_id'],
+                    "from_time": next_reservation['from_time'],
+                    "to_time": next_reservation['to_time']
+                }
+            else:
+                next_reservation_info = None
+
+            connectors_status[conn_id] = {
                 "status": conn_state["status"],
                 "latest_meter_value": conn_state.get("last_meter_value"),
                 "latest_transaction_consumption_kwh": conn_state.get("last_transaction_consumption_kwh", 0),
                 "error_code": conn_state.get("error_code", "NoError"),
-                "latest_transaction_id": conn_state.get("transaction_id")
+                "latest_transaction_id": conn_state.get("transaction_id"),
+                "next_reservation": next_reservation_info
             }
-            for conn_id, conn_state in connectors.items()
-        }
 
-        # Return the current state of the specific charge point
         return jsonify({
             "charger_id": charge_point_id,
             "status": charge_point.state["status"],
@@ -472,16 +416,35 @@ def get_charge_point_status():
         for cp_id, charge_point in central_system.charge_points.items():
             online_status = "Online (with error)" if charge_point.online and charge_point.has_error else "Online" if charge_point.online else "Offline"
             connectors = charge_point.state["connectors"]
-            connectors_status = {
-                conn_id: {
+            connectors_status = {}
+
+            for conn_id, conn_state in connectors.items():
+                # Find the next valid reservation for this connector
+                next_reservation = Reservation.select().where(
+                    Reservation.charger_id == cp_id,
+                    Reservation.connector_id == conn_id,
+                    Reservation.status == 'Reserved'
+                ).order_by(Reservation.expiry_date.asc()).dicts().first()
+
+                if next_reservation:
+                    next_reservation_info = {
+                        "reservation_id": next_reservation['reservation_id'],
+                        "connector_id": next_reservation['connector_id'],
+                        "from_time": next_reservation['from_time'],
+                        "to_time": next_reservation['to_time']
+                    }
+                else:
+                    next_reservation_info = None
+
+                connectors_status[conn_id] = {
                     "status": conn_state["status"],
                     "last_meter_value": conn_state.get("last_meter_value"),
                     "last_transaction_consumption_kwh": conn_state.get("last_transaction_consumption_kwh", 0),
                     "error_code": conn_state.get("error_code", "NoError"),
-                    "transaction_id": conn_state.get("transaction_id")
+                    "transaction_id": conn_state.get("transaction_id"),
+                    "next_reservation": next_reservation_info
                 }
-                for conn_id, conn_state in connectors.items()
-            }
+
             all_statuses[cp_id] = {
                 "status": charge_point.state["status"],
                 "connectors": connectors_status,
@@ -489,6 +452,86 @@ def get_charge_point_status():
                 "last_message_received_time": charge_point.last_message_time.isoformat()
             }
         return jsonify(all_statuses)
+
+@app.route("/trigger_message", methods=["POST"])
+def trigger_message():
+    data = request.json
+    charge_point_id = data.get('charge_point_id')
+    requested_message = data.get('requested_message')
+    logging.debug(f"Received request to trigger message: {data}")
+    try:
+        response = run_async(
+            central_system.send_request(
+                charge_point_id=charge_point_id,
+                request_method='trigger_message',
+                requested_message=requested_message
+            )
+        )
+        logging.debug(f"Response from trigger_message: {response}")
+        if isinstance(response, dict) and "error" in response:
+            return jsonify(response), 404
+        return jsonify({"status": response.status})
+    except ConnectionClosedError as e:
+        logging.error(f"Connection error: {e}")
+        return jsonify({"error": f"Connection error: {e}"}), 500
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+        return jsonify({"error": f"An error occurred: {e}"}), 500
+
+@app.route("/reserve_now", methods=["POST"])
+def reserve_now():
+    data = request.json
+    charge_point_id = data.get('charge_point_id')
+    connector_id = data.get('connector_id')
+    expiry_date = data.get('expiry_date')
+    id_tag = data.get('id_tag')
+    reservation_id = data.get('reservation_id')
+    logging.debug(f"Received request to reserve now: {data}")
+    try:
+        response = run_async(
+            central_system.send_request(
+                charge_point_id=charge_point_id,
+                request_method='reserve_now',
+                connector_id=connector_id,
+                expiry_date=expiry_date,
+                id_tag=id_tag,
+                reservation_id=reservation_id
+            )
+        )
+        logging.debug(f"Response from reserve_now: {response}")
+        if isinstance(response, dict) and "error" in response:
+            return jsonify(response), 404
+        return jsonify({"status": response.status})
+    except ConnectionClosedError as e:
+        logging.error(f"Connection error: {e}")
+        return jsonify({"error": f"Connection error: {e}"}), 500
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+        return jsonify({"error": f"An error occurred: {e}"}), 500
+
+@app.route("/cancel_reservation", methods=["POST"])
+def cancel_reservation():
+    data = request.json
+    charge_point_id = data.get('charge_point_id')
+    reservation_id = data.get('reservation_id')
+    logging.debug(f"Received request to cancel reservation: {data}")
+    try:
+        response = run_async(
+            central_system.cancel_reservation(
+                charge_point_id=charge_point_id,
+                reservation_id=reservation_id
+            )
+        )
+        logging.debug(f"Response from cancel_reservation: {response}")
+        if isinstance(response, dict) and "error" in response:
+            return jsonify(response), 404
+        return jsonify({"status": response.status})
+    except ConnectionClosedError as e:
+        logging.error(f"Connection error: {e}")
+        return jsonify({"error": f"Connection error: {e}"}), 500
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+        return jsonify({"error": f"An error occurred: {e}"}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)

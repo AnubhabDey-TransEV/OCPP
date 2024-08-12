@@ -23,6 +23,21 @@ class Transaction(BaseModel):
             (('charger_id', 'connector_id'), False),
         )
 
-# Create the table (you can run this part once to create the table)
+class Reservation(BaseModel):
+    id = AutoField()
+    charger_id = CharField()
+    connector_id = IntegerField()
+    id_tag = CharField()
+    expiry_date = DateTimeField()
+    reservation_id = IntegerField(unique=True)
+    reserved_at = DateTimeField()
+    from_time = DateTimeField()  # The start time of the reservation
+    to_time = DateTimeField()  # The end time of the reservation
+    status = CharField()  # Status can be 'Reserved' or 'Cancelled'
+
+    class Meta:
+        table_name = 'reservations'
+
+# Create the tables
 db.connect()
-db.create_tables([Transaction], safe=True)
+db.create_tables([Transaction, Reservation], safe=True)

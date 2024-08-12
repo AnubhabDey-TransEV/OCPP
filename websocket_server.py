@@ -3,6 +3,9 @@ import websockets
 import logging
 from datetime import datetime, timezone as dt_timezone
 from OCPP_Requests import ChargePoint
+from models import Reservation
+from peewee import DoesNotExist
+from Chargers_to_CMS_Parser import parse_and_store_cancel_reservation_response
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -65,6 +68,43 @@ class CentralSystem:
         except Exception as e:
             logging.error(f"Error sending {request_method} to charge point {charge_point_id}: {e}")
             return {"error": str(e)}
+
+    async def cancel_reservation(self, charge_point_id, reservation_id):
+        # Check if the reservation exists
+        try:
+            reservation = Reservation.get(Reservation.reservation_id == reservation_id)
+        except DoesNotExist:
+            logging.info(f"No reservation found with ID {reservation_id}")
+            return {"error": "Reservation not found"}
+
+        # Proceed to send the cancel request if the reservation exists
+        response = await self.send_request(
+            charge_point_id=charge_point_id,
+            request_method='cancel_reservation',
+            reservation_id=reservation_id
+        )
+
+        if response.status == 'Accepted':
+            # Update the status of the reservation to 'Cancelled'
+            reservation.status = 'Cancelled'
+            reservation.save()
+
+            # Find the next valid reservation (Reserved)
+            next_reservation = Reservation.select().where(
+                Reservation.charger_id == charge_point_id,
+                Reservation.status == 'Reserved'
+            ).order_by(Reservation.expiry_date.asc()).first()
+
+            if next_reservation:
+                logging.info(f"Next reservation for charger {charge_point_id}: {next_reservation.reservation_id}")
+
+            # Parse and store the response for CancelReservation
+            parse_and_store_cancel_reservation_response(charge_point_id, reservation_id=reservation_id, status='Cancelled')
+        else:
+            # Parse and store the response as a failure
+            parse_and_store_cancel_reservation_response(charge_point_id, reservation_id=reservation_id, status='Failed')
+
+        return response
 
     async def check_offline_chargers(self):
         while True:

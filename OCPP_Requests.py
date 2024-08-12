@@ -393,3 +393,32 @@ class ChargePoint(CP):
         parser_ctc.parse_and_store_get_meter_values(self.charger_id, connector_id=connector_id, status=response.status)
         parser_c2c.parse_and_store_acknowledgment(self.charger_id, "GetMeterValues", "GetMeterValues", self.currdatetime(), status=response.status)
         return response
+
+    async def trigger_message(self, requested_message):
+        request = call.TriggerMessage(
+            requested_message=requested_message
+        )
+        parser_ctc.parse_and_store_trigger_message(self.charger_id, requested_message=requested_message)
+        response = await self.call(request)
+        return response
+
+    async def reserve_now(self, connector_id, expiry_date, id_tag, reservation_id):
+        request = call.ReserveNow(
+            connector_id=connector_id,
+            expiry_date=expiry_date,
+            id_tag=id_tag,
+            reservation_id=reservation_id
+        )
+        parser_ctc.parse_and_store_reserve_now(self.charger_id, connector_id=connector_id, expiry_date=expiry_date, id_tag=id_tag, reservation_id=reservation_id)
+        response = await self.call(request)
+        parser_c2c.parse_and_store_reserve_now_response(self.charger_id, connector_id=connector_id, expiry_date=expiry_date, id_tag=id_tag, reservation_id=reservation_id, status=response.status)
+        return response
+
+    async def cancel_reservation(self, reservation_id):
+        request = call.CancelReservation(
+            reservation_id=reservation_id
+        )
+        parser_ctc.parse_and_store_cancel_reservation(self.charger_id, reservation_id=reservation_id)
+        response = await self.call(request)
+        parser_c2c.parse_and_store_cancel_reservation_response(self.charger_id, reservation_id=reservation_id, status=response.status)
+        return response

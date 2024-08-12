@@ -178,6 +178,14 @@ def parse_and_store_boot_notification(charger_id, **kwargs):
     message_type = "BootNotification"
     store_ocpp_message(charger_id, message_type, "Request", **kwargs)
 
+def parse_and_store_reserve_now_response(charger_id, **kwargs):
+    message_type = "ReserveNowResponse"
+    store_ocpp_message(charger_id, message_type, "Response", **kwargs)
+
+def parse_and_store_cancel_reservation_response(charger_id, **kwargs):
+    message_type = "CancelReservationResponse"
+    store_ocpp_message(charger_id, message_type, "Response", **kwargs)
+
 def parse_and_store_heartbeat(charger_id, **kwargs):
     message_type = "Heartbeat"
     store_ocpp_message(charger_id, message_type, "Request", **kwargs)

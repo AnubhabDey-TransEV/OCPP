@@ -219,6 +219,18 @@ def parse_and_store_get_configuration(charger_id, **kwargs):
 def parse_and_store_acknowledgment(charger_id, message_type, original_message_type, original_message_time, **kwargs):
     store_ocpp_message(charger_id, message_type, "Acknowledgment", original_message_type=original_message_type, original_message_time=original_message_time, **kwargs)
 
+def parse_and_store_trigger_message(charger_id, **kwargs):
+    message_type = "TriggerMessage"
+    store_ocpp_message(charger_id, message_type, "Request", **kwargs)
+
+def parse_and_store_reserve_now(charger_id, **kwargs):
+    message_type = "ReserveNow"
+    store_ocpp_message(charger_id, message_type, "Request", **kwargs)
+
+def parse_and_store_cancel_reservation(charger_id, **kwargs):
+    message_type = "CancelReservation"
+    store_ocpp_message(charger_id, message_type, "Request", **kwargs)
+
 # Close the database connection when done
 def close_connection():
     db.close()
