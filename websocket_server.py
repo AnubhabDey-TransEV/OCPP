@@ -122,7 +122,7 @@ class CentralSystem:
             websockets.serve(
                 self.handle_charge_point,
                 "0.0.0.0",
-                5000,
+                10000,
                 create_protocol=lambda *args, **kwargs: CustomWebSocketServerProtocol(self, *args, **kwargs)
             ),
             self.check_offline_chargers()
