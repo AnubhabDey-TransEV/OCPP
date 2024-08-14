@@ -14,8 +14,7 @@ db = MySQLDatabase(
     user=DB_USER,
     password=DB_PASSWORD,
     host=DB_HOST,
-    port=DB_PORT,
-    ssl=True
+    port=DB_PORT
 )
 
 def get_database():
