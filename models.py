@@ -1,7 +1,8 @@
-from peewee import Model, AutoField, CharField, IntegerField, FloatField, DateTimeField, MySQLDatabase
+from peewee import Model, AutoField, CharField, DateTimeField, IntegerField, FloatField
+from dbconn import get_database
 
-# Assuming you've already defined your database connection
-db = MySQLDatabase('OCPP', user='ocpphandler', password='ocpp2024', host='localhost', port=3306)
+# Get the database connection
+db = get_database()
 
 class BaseModel(Model):
     class Meta:
@@ -38,6 +39,30 @@ class Reservation(BaseModel):
     class Meta:
         table_name = 'reservations'
 
+class OCPPMessageCMS(BaseModel):
+    id = AutoField()
+    message_type = CharField()
+    charger_id = CharField()
+    message_category = CharField()
+    original_message_type = CharField(null=True)
+    original_message_time = DateTimeField(null=True)
+    timestamp = DateTimeField()
+
+    class Meta:
+        table_name = 'CMS_to_Charger'
+
+class OCPPMessageCharger(BaseModel):
+    id = AutoField()
+    message_type = CharField()
+    charger_id = CharField()
+    message_category = CharField()
+    original_message_type = CharField(null=True)
+    original_message_time = DateTimeField(null=True)
+    timestamp = DateTimeField()
+
+    class Meta:
+        table_name = 'Charger_to_CMS'
+
 # Create the tables
 db.connect()
-db.create_tables([Transaction, Reservation], safe=True)
+db.create_tables([Transaction, Reservation, OCPPMessageCMS, OCPPMessageCharger], safe=True)

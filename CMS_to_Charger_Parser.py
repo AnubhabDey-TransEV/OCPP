@@ -1,40 +1,14 @@
-from peewee import Model, AutoField, CharField, DateTimeField, MySQLDatabase, IntegrityError
+import logging
 from datetime import datetime, timezone
 import pytz
-import logging
 import json
+from dbconn import get_database
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 
-# Database connection
-DATABASE_URI = {
-    'host': 'localhost',
-    'user': 'ocpphandler',
-    'password': 'ocpp2024',
-    'database': 'OCPP'
-}
-db = MySQLDatabase(DATABASE_URI['database'], user=DATABASE_URI['user'], password=DATABASE_URI['password'], host=DATABASE_URI['host'], port=3306)
-
-class BaseModel(Model):
-    class Meta:
-        database = db
-
-class OCPPMessage(BaseModel):
-    id = AutoField()  # Auto-incrementing primary key
-    message_type = CharField()
-    charger_id = CharField()
-    message_category = CharField()
-    original_message_type = CharField(null=True)
-    original_message_time = DateTimeField(null=True)
-    timestamp = DateTimeField(default=lambda: get_ist_time())
-
-    class Meta:
-        table_name = 'CMS_to_Charger'
-
-# Ensure the table is created
-db.connect()
-db.create_tables([OCPPMessage])
+# Get the database connection
+db = get_database()
 
 def get_existing_columns():
     cursor = db.execute_sql('SHOW COLUMNS FROM CMS_to_Charger')
@@ -164,7 +138,7 @@ def store_ocpp_message(charger_id, message_type, message_category, **kwargs):
 
         logging.debug(f"Store OCPP message data after update: {data}")
 
-        # Here, implement the logic to store the message (e.g., database storage)
+        # Insert the data using the OCPPMessageCMS model
         insert_data(data)
         
     except Exception as e:

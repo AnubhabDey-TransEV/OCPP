@@ -1,40 +1,14 @@
-from peewee import Model, AutoField, CharField, DateTimeField, MySQLDatabase, IntegrityError
+import logging
 from datetime import datetime, timezone
 import pytz
-import logging
 import json
+from dbconn import get_database  # Import the get_database function to get the database connection
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 
-# Database connection
-DATABASE_URI = {
-    'host': 'localhost',
-    'user': 'ocpphandler',
-    'password': 'ocpp2024',
-    'database': 'OCPP'
-}
-db = MySQLDatabase(DATABASE_URI['database'], user=DATABASE_URI['user'], password=DATABASE_URI['password'], host=DATABASE_URI['host'], port=3306)
-
-class BaseModel(Model):
-    class Meta:
-        database = db
-
-class OCPPMessage(BaseModel):
-    id = AutoField()  # Auto-incrementing primary key
-    message_type = CharField()
-    charger_id = CharField()
-    message_category = CharField()
-    original_message_type = CharField(null=True)
-    original_message_time = DateTimeField(null=True)
-    timestamp = DateTimeField(default=lambda: get_ist_time())
-
-    class Meta:
-        table_name = 'Charger_to_CMS'
-
-# Ensure the table is created
-db.connect()
-db.create_tables([OCPPMessage])
+# Get the database connection
+db = get_database()
 
 def get_existing_columns():
     cursor = db.execute_sql('SHOW COLUMNS FROM Charger_to_CMS')
@@ -50,6 +24,7 @@ def add_column(column_name, column_type):
             db.execute_sql(f'ALTER TABLE Charger_to_CMS ADD COLUMN `{column_name}` FLOAT')
         elif column_type == 'datetime':
             db.execute_sql(f'ALTER TABLE Charger_to_CMS ADD COLUMN `{column_name}` DATETIME')
+        logging.debug(f"Added column {column_name} of type {column_type}")
     except Exception as e:
         logging.error(f"Error adding column {column_name}: {e}")
 
@@ -117,11 +92,8 @@ def insert_data(data):
             elif isinstance(value, datetime):
                 add_column(key, 'datetime')
 
-    # Re-fetch existing columns to include newly added columns
-    existing_columns = get_existing_columns()  # <-- Key change
-
     # Ensure the columns are ordered correctly
-    columns = ", ".join([f"`{col}`" for col in data.keys()])  # <-- Column escaping
+    columns = ", ".join([f"`{col}`" for col in data.keys()])
     placeholders = ", ".join(["%s"] * len(data))
     values = list(data.values())
 
