@@ -1,5 +1,6 @@
 from decouple import config
 from peewee import MySQLDatabase
+import ssl
 
 # Load database configuration from environment variables
 DB_NAME = config('DB_NAME')
@@ -14,7 +15,8 @@ db = MySQLDatabase(
     user=DB_USER,
     password=DB_PASSWORD,
     host=DB_HOST,
-    port=DB_PORT
+    port=DB_PORT,
+    # ssl=True
 )
 
 def get_database():
