@@ -117,7 +117,7 @@ class CentralSystem:
 central_system = CentralSystem()
 
 # WebSocket endpoint that supports charger_id with slashes
-@app.websocket("/ws/{charger_id:path}")
+@app.websocket("/{charger_id:path}")
 async def websocket_endpoint(websocket: WebSocket, charger_id: str):
     await central_system.handle_charge_point(websocket, charger_id)
 
@@ -191,7 +191,7 @@ class StatusRequest(BaseModel):
 
 # REST API endpoints
 
-@app.post("/change_availability")
+@app.post("/api/change_availability")
 async def change_availability(request: ChangeAvailabilityRequest):
     response = await central_system.send_request(
         charge_point_id=request.charge_point_id,
@@ -203,7 +203,7 @@ async def change_availability(request: ChangeAvailabilityRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
-@app.post("/start_transaction")
+@app.post("/api/start_transaction")
 async def start_transaction(request: StartTransactionRequest):
     response = await central_system.send_request(
         charge_point_id=request.charge_point_id,
@@ -215,7 +215,7 @@ async def start_transaction(request: StartTransactionRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
-@app.post("/stop_transaction")
+@app.post("/api/stop_transaction")
 async def stop_transaction(request: StopTransactionRequest):
     response = await central_system.send_request(
         charge_point_id=request.charge_point_id,
@@ -226,7 +226,7 @@ async def stop_transaction(request: StopTransactionRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
-@app.post("/change_configuration")
+@app.post("/api/change_configuration")
 async def change_configuration(request: ChangeConfigurationRequest):
     response = await central_system.send_request(
         charge_point_id=request.charge_point_id,
@@ -238,7 +238,7 @@ async def change_configuration(request: ChangeConfigurationRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
-@app.post("/clear_cache")
+@app.post("/api/clear_cache")
 async def clear_cache(request: GetConfigurationRequest):
     response = await central_system.send_request(
         charge_point_id=request.charge_point_id,
@@ -248,7 +248,7 @@ async def clear_cache(request: GetConfigurationRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
-@app.post("/unlock_connector")
+@app.post("/api/unlock_connector")
 async def unlock_connector(request: UnlockConnectorRequest):
     response = await central_system.send_request(
         charge_point_id=request.charge_point_id,
@@ -259,7 +259,7 @@ async def unlock_connector(request: UnlockConnectorRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
-@app.post("/get_diagnostics")
+@app.post("/api/get_diagnostics")
 async def get_diagnostics(request: GetDiagnosticsRequest):
     response = await central_system.send_request(
         charge_point_id=request.charge_point_id,
@@ -274,7 +274,7 @@ async def get_diagnostics(request: GetDiagnosticsRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
-@app.post("/update_firmware")
+@app.post("/api/update_firmware")
 async def update_firmware(request: UpdateFirmwareRequest):
     response = await central_system.send_request(
         charge_point_id=request.charge_point_id,
@@ -288,7 +288,7 @@ async def update_firmware(request: UpdateFirmwareRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
-@app.post("/reset")
+@app.post("/api/reset")
 async def reset(request: ResetRequest):
     response = await central_system.send_request(
         charge_point_id=request.charge_point_id,
@@ -299,7 +299,7 @@ async def reset(request: ResetRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
-@app.post("/get_meter_values")
+@app.post("/api/get_meter_values")
 async def get_meter_values(request: GetMeterValuesRequest):
     response = await central_system.send_request(
         charge_point_id=request.charge_point_id,
@@ -310,7 +310,7 @@ async def get_meter_values(request: GetMeterValuesRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
-@app.post("/get_configuration")
+@app.post("/api/get_configuration")
 async def get_configuration(request: GetConfigurationRequest):
     response = await central_system.send_request(
         charge_point_id=request.charge_point_id,
@@ -320,7 +320,7 @@ async def get_configuration(request: GetConfigurationRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return response  # Return the configuration response as JSON
 
-@app.post("/status")
+@app.post("/api/status")
 async def get_charge_point_status(request: StatusRequest):
     charge_point_id = request.charge_point_id
     
@@ -449,7 +449,7 @@ async def get_charge_point_status(request: StatusRequest):
             }
         return all_statuses
 
-@app.post("/trigger_message")
+@app.post("/api/trigger_message")
 async def trigger_message(request: TriggerMessageRequest):
     response = await central_system.send_request(
         charge_point_id=request.charge_point_id,
@@ -460,7 +460,7 @@ async def trigger_message(request: TriggerMessageRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
-@app.post("/reserve_now")
+@app.post("/api/reserve_now")
 async def reserve_now(request: ReserveNowRequest):
     response = await central_system.send_request(
         charge_point_id=request.charge_point_id,
@@ -474,7 +474,7 @@ async def reserve_now(request: ReserveNowRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
-@app.post("/cancel_reservation")
+@app.post("/api/cancel_reservation")
 async def cancel_reservation(request: CancelReservationRequest):
     response = await central_system.cancel_reservation(
         charge_point_id=request.charge_point_id,
