@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timezone as dt_timezone
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Header
 from pydantic import BaseModel
 from typing import Optional, Dict
 from peewee import DoesNotExist
@@ -9,6 +9,12 @@ from OCPP_Requests import ChargePoint  # Assuming this is where ChargePoint is i
 from models import Reservation
 from Chargers_to_CMS_Parser import parse_and_store_cancel_reservation_response  # Assuming this handles responses
 from fastapi.middleware.cors import CORSMiddleware
+import qrcode
+from io import BytesIO
+from fastapi.responses import StreamingResponse
+import requests
+import json
+from decouple import config
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -188,6 +194,9 @@ class GetConfigurationRequest(BaseModel):
 
 class StatusRequest(BaseModel):
     charge_point_id: str
+
+class MakeQRCodes(BaseModel):
+    charge_point_id:str
 
 # REST API endpoints
 
@@ -483,6 +492,75 @@ async def cancel_reservation(request: CancelReservationRequest):
     if isinstance((response, dict) and "error" in response):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
+
+@app.post("/api/make_qr_code/")
+async def make_qr_code(request: MakeQRCodes, apiauthkey: str = Header(None)):
+    # Load the API key from the .env file
+    apiauthkey = config("APIAUTHKEY")
+    
+    # Validate the provided API key
+    if apiauthkey != config("APIAUTHKEY"):
+        raise HTTPException(status_code=403, detail="Invalid API key")
+
+    # Step 1: Fetch data from the first API
+    first_api_url = config("APICHARGERDATA")  # Replace with the actual first API URL
+    response1 = requests.get(first_api_url, headers={"apiauthkey": apiauthkey})
+    
+    if response1.status_code != 200:
+        raise HTTPException(status_code=500, detail="Error fetching data from the first API")
+    
+    charger_data = response1.json().get("data", [])
+    
+    # Extract uid and ChargerSerialNum from charge_point_id
+    uid, charger_serialnum = request.charge_point_id.split("/")
+    
+    # Find the charger details in the response data
+    charger = next((item for item in charger_data if item["uid"] == uid and item["Chargerserialnum"] == charger_serialnum), None)
+    
+    if not charger:
+        raise HTTPException(status_code=404, detail="Charger not found")
+
+    # Step 2: Fetch user details using the uid from the first API response
+    second_api_url = config("APIUSERCHARGERDATA")  # Replace with the actual second API URL
+    response2 = requests.post(second_api_url, headers={"apiauthkey": apiauthkey}, json={"get_charger_id": uid})
+    
+    if response2.status_code != 200:
+        raise HTTPException(status_code=500, detail="Error fetching user data from the second API")
+
+    user_details = response2.json().get("userdetails", {})
+    first_name = user_details.get("firstname", "")
+    last_name = user_details.get("lastname", "")
+
+    # Replace userId with the first and last name
+    charger["userId"] = f"{first_name} {last_name}"
+
+    # Remove the "id" field from the charger data
+    charger.pop("id", None)
+
+    charger["razorpay_url"] = config("RAZORPAYURL")
+
+    # Convert the charger data to a JSON string
+    charger_json = json.dumps(charger)
+
+    # Generate the QR code
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=3,
+        border=2,
+    )
+    qr.add_data(charger_json)
+    qr.make(fit=True)
+
+    img = qr.make_image(fill='black', back_color='white')
+
+    # Prepare the image for response
+    img_io = BytesIO()
+    img.save(img_io, 'PNG')
+    img_io.seek(0)
+
+    # Return the QR code image as a response
+    return StreamingResponse(img_io, media_type="image/png")
 
 if __name__ == "__main__":
     import uvicorn
