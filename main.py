@@ -456,7 +456,7 @@ async def trigger_message(request: TriggerMessageRequest):
         request_method='trigger_message',
         requested_message=request.requested_message
     )
-    if isinstance((response, dict) and "error" in response):
+    if isinstance(response, dict) and "error" in response:
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
@@ -486,4 +486,4 @@ async def cancel_reservation(request: CancelReservationRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=10000)
+    uvicorn.run(app, host="0.0.0.0", port=5000)
