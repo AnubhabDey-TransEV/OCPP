@@ -1079,4 +1079,4 @@ async def make_qr_code(request: MakeQRCodes, apiauthkey: str = Header(None)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=80)
+    uvicorn.run(app, host=config("F_SERVER_HOST"), port=("F_SERVER_PORT"))
