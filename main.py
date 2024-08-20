@@ -1037,7 +1037,7 @@ async def make_qr_code(request: MakeQRCodes, apiauthkey: str = Header(None)):
 
     # Step 2: Fetch user details using the uid from the first API response
     second_api_url = config("APIUSERCHARGERDATA")  # Replace with the actual second API URL
-    response2 = requests.post(second_api_url, headers={"apiauthkey": apiauthkey}, timeout=timeout json={"get_charger_id": uid})
+    response2 = requests.post(second_api_url, headers={"apiauthkey": apiauthkey}, timeout=timeout, json={"get_charger_id": uid})
     
     if response2.status_code != 200:
         raise HTTPException(status_code=500, detail="Error fetching user data from the second API")
