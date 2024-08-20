@@ -121,7 +121,8 @@ class CentralSystem:
         uid, charger_serialnum = charge_point_id.split("/")
         first_api_url = config("APICHARGERDATA")
         apiauthkey = config("APIAUTHKEY")
-        response = requests.get(first_api_url, headers={"apiauthkey": apiauthkey})
+        timeout=60
+        response = requests.get(first_api_url, headers={"apiauthkey": apiauthkey}, timeout=timeout)
         
         if response.status_code != 200:
             logging.error("Error fetching charger data from API")
@@ -1015,10 +1016,10 @@ async def make_qr_code(request: MakeQRCodes, apiauthkey: str = Header(None)):
     # Validate the provided API key
     if apiauthkey != config("APIAUTHKEY"):
         raise HTTPException(status_code=403, detail="Invalid API key")
-
+    timeout=60
     # Step 1: Fetch data from the first API
     first_api_url = config("APICHARGERDATA")  # Replace with the actual first API URL
-    response1 = requests.get(first_api_url, headers={"apiauthkey": apiauthkey})
+    response1 = requests.get(first_api_url, headers={"apiauthkey": apiauthkey}, timeout=timeout)
     
     if response1.status_code != 200:
         raise HTTPException(status_code=500, detail="Error fetching data from the first API")
@@ -1036,7 +1037,7 @@ async def make_qr_code(request: MakeQRCodes, apiauthkey: str = Header(None)):
 
     # Step 2: Fetch user details using the uid from the first API response
     second_api_url = config("APIUSERCHARGERDATA")  # Replace with the actual second API URL
-    response2 = requests.post(second_api_url, headers={"apiauthkey": apiauthkey}, json={"get_charger_id": uid})
+    response2 = requests.post(second_api_url, headers={"apiauthkey": apiauthkey}, timeout=timeout json={"get_charger_id": uid})
     
     if response2.status_code != 200:
         raise HTTPException(status_code=500, detail="Error fetching user data from the second API")
