@@ -380,20 +380,6 @@ class ChargePoint(CP):
         parser_c2c.parse_and_store_acknowledgment(self.charger_id, "Reset", "Reset", self.currdatetime(), status=response.status)
         return response
 
-    async def get_meter_values(self, connector_id):
-        logging.debug(f"Sending GetMeterValues: connector_id {connector_id}")
-        request = call.GetMeterValues(
-            connector_id=connector_id
-        )
-
-        response = await self.call(request)
-        self.mark_as_online()  # Mark as online when a response is received
-        logging.debug(f"GetMeterValues response: {response}")
-
-        parser_ctc.parse_and_store_get_meter_values(self.charger_id, connector_id=connector_id, status=response.status)
-        parser_c2c.parse_and_store_acknowledgment(self.charger_id, "GetMeterValues", "GetMeterValues", self.currdatetime(), status=response.status)
-        return response
-
     async def trigger_message(self, requested_message):
         request = call.TriggerMessage(
             requested_message=requested_message

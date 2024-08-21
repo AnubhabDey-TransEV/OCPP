@@ -182,10 +182,6 @@ def parse_and_store_reset(charger_id, **kwargs):
     message_type = "Reset"
     store_ocpp_message(charger_id, message_type, "Request", **kwargs)
 
-def parse_and_store_get_meter_values(charger_id, **kwargs):
-    message_type = "GetMeterValues"
-    store_ocpp_message(charger_id, message_type, "Request", **kwargs)
-
 def parse_and_store_get_configuration(charger_id, **kwargs):
     message_type = "GetConfiguration"
     store_ocpp_message(charger_id, message_type, "Request", **kwargs)

@@ -246,10 +246,6 @@ class ResetRequest(BaseModel):
     charge_point_id: str
     type: str
 
-class GetMeterValuesRequest(BaseModel):
-    charge_point_id: str
-    connector_id: int
-
 class TriggerMessageRequest(BaseModel):
     charge_point_id: str
     requested_message: str
@@ -379,17 +375,6 @@ async def reset(request: ResetRequest):
         charge_point_id=request.charge_point_id,
         request_method='reset',
         type=request.type
-    )
-    if isinstance(response, dict) and "error" in response:
-        raise HTTPException(status_code=404, detail=response["error"])
-    return {"status": response.status}
-
-@app.post("/api/get_meter_values")
-async def get_meter_values(request: GetMeterValuesRequest):
-    response = await central_system.send_request(
-        charge_point_id=request.charge_point_id,
-        request_method='get_meter_values',
-        connector_id=request.connector_id
     )
     if isinstance(response, dict) and "error" in response:
         raise HTTPException(status_code=404, detail=response["error"])
