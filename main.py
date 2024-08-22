@@ -121,7 +121,7 @@ class CentralSystem:
         uid, charger_serialnum = charge_point_id.split("/")
         first_api_url = config("APICHARGERDATA")
         apiauthkey = config("APIAUTHKEY")
-        timeout=60
+        timeout=120
         response = requests.get(first_api_url, headers={"apiauthkey": apiauthkey}, timeout=timeout)
         
         if response.status_code != 200:
@@ -563,7 +563,7 @@ async def make_qr_code(request: MakeQRCodes, apiauthkey: str = Header(None)):
     if apiauthkey != config("APIAUTHKEY"):
         raise HTTPException(status_code=403, detail="Invalid API key")
     
-    timeout=60
+    timeout=120
 
     # Step 1: Fetch data from the first API
     first_api_url = config("APICHARGERDATA")  # Replace with the actual first API URL

@@ -61,8 +61,13 @@ def insert_data(data):
     logging.debug(f"Existing columns: {existing_columns}")
     logging.debug(f"Data to insert: {data}")
 
-    # Flatten the data
-    data = flatten_dict(data)
+    # Add payload column if necessary
+    if "payload" in data and "payload" not in existing_columns:
+        add_column("payload", "string")
+
+    # Flatten the data for non-JSON messages
+    if "payload" not in data:
+        data = flatten_dict(data)
 
     # Convert all datetime fields to IST
     for key, value in data.items():
@@ -77,7 +82,7 @@ def insert_data(data):
 
     # Serialize data values that are dicts or lists
     for key, value in data.items():
-        if isinstance(value, (dict, list)):
+        if isinstance(value, (dict, list)) and key != "payload":
             data[key] = json.dumps(value)
 
     # Add columns dynamically if they do not exist
@@ -129,16 +134,18 @@ def store_ocpp_message(charger_id, message_type, message_category, **kwargs):
             "timestamp": get_ist_time()
         }
 
-        logging.debug(f"Store OCPP message data before update: {data}")
-
-        # Add additional columns dynamically, ensuring no type issues
-        for key, value in kwargs.items():
-            if key not in data:
-                data[key] = value
+        # Store the entire payload as JSON for specific message types
+        if message_type in ["MeterValues", "ConfigurationResponse"]:
+            data["payload"] = json.dumps(kwargs)  # Store kwargs as JSON in payload
+        else:
+            # Add additional columns dynamically, ensuring no type issues
+            for key, value in kwargs.items():
+                if key not in data:
+                    data[key] = value
 
         logging.debug(f"Store OCPP message data after update: {data}")
 
-        # Here, implement the logic to store the message (e.g., database storage)
+        # Insert data into the database
         insert_data(data)
         
     except Exception as e:
@@ -188,34 +195,7 @@ def parse_and_store_firmware_status(charger_id, **kwargs):
 
 def parse_and_store_get_configuration_response(charger_id, configuration_key):
     message_type = "ConfigurationResponse"
-    for config in configuration_key:
-        key = config.get('key')
-        value = config.get('value')
-        readonly = config.get('readonly')
-
-        # Log the types and values of key, value, and readonly
-        logging.debug(f"Processing configuration key: {config}")
-        logging.debug(f"Key: {key}, Type: {type(key)}")
-        logging.debug(f"Value: {value}, Type: {type(value)}")
-        logging.debug(f"Readonly: {readonly}, Type: {type(readonly)}")
-        
-        # Handle None values and other type issues
-        if not isinstance(key, str) or (value is not None and not isinstance(value, (int, float, str))) or not isinstance(readonly, bool):
-            logging.error(f"Invalid data types in configuration_key: {config}")
-            raise ValueError("Invalid data types in configuration_key")
-
-        # Default the value to an empty string if it's None
-        if value is None:
-            value = ""
-
-        data = {
-            'key': key,
-            'value': value,
-            'readonly': readonly,
-        }
-        
-        store_ocpp_message(charger_id, message_type, "Response", **data)
-
+    store_ocpp_message(charger_id, message_type, "Response", configuration_key=configuration_key)
 
 def parse_and_store_acknowledgment(charger_id, message_type, original_message_type, original_message_time, **kwargs):
     store_ocpp_message(charger_id, message_type, "Acknowledgment", original_message_type=original_message_type, original_message_time=original_message_time, **kwargs)
