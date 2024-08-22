@@ -1,4 +1,4 @@
-from peewee import Model, AutoField, CharField, DateTimeField, IntegerField, FloatField
+from peewee import Model, AutoField, CharField, DateTimeField, IntegerField, FloatField, BlobField
 from dbconn import get_database
 
 # Get the database connection
@@ -63,6 +63,17 @@ class OCPPMessageCharger(BaseModel):
     class Meta:
         table_name = 'Charger_to_CMS'
 
+class QRCodeData(BaseModel):
+    id = AutoField()
+    charger_id = CharField()
+    charger_serial_number = CharField()
+    image_path = CharField()  # Add this field
+    filename = CharField()  # Add this field
+    generation_date = DateTimeField()
+    
+    class Meta:
+        table_name = 'qr_code_data'
+
 # Create the tables
 db.connect()
-db.create_tables([Transaction, Reservation, OCPPMessageCMS, OCPPMessageCharger], safe=True)
+db.create_tables([Transaction, Reservation, OCPPMessageCMS, OCPPMessageCharger, QRCodeData], safe=True)
