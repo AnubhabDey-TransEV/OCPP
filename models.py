@@ -74,6 +74,20 @@ class QRCodeData(BaseModel):
     class Meta:
         table_name = 'qr_code_data'
 
+class Analytics(BaseModel):
+    charger_id = CharField()
+    timestamp = DateTimeField()
+    total_uptime = CharField()  # Storing in a human-readable format
+    uptime_percentage = FloatField()
+    total_transactions = IntegerField()
+    total_electricity_used_kwh = FloatField()
+    occupancy_rate_percentage = FloatField()
+    average_session_duration = CharField()  # Storing in a human-readable format
+    peak_usage_times = CharField()  # Storing as a comma-separated string
+
+    class Meta:
+        table_name = 'analytics'
+
 # Create the tables
 db.connect()
-db.create_tables([Transaction, Reservation, OCPPMessageCMS, OCPPMessageCharger, QRCodeData], safe=True)
+db.create_tables([Transaction, Reservation, OCPPMessageCMS, OCPPMessageCharger, QRCodeData, Analytics], safe=True)

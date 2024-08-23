@@ -111,8 +111,7 @@ def insert_data(data):
     db.execute_sql(query, values)
 
 def get_ist_time():
-    utc_time = datetime.now(timezone.utc)
-    return convert_to_ist(utc_time)
+   return datetime.isoformat(datetime.now())
 
 # Function to format and store messages and acknowledgments from Chargers to CMS
 def store_ocpp_message(charger_id, message_type, message_category, **kwargs):

@@ -14,7 +14,7 @@ import json
 from decouple import config
 import os
 from OCPP_Requests import ChargePoint  # Assuming this is where ChargePoint is implemented
-from models import Reservation, QRCodeData
+from models import Reservation, QRCodeData, db, Analytics
 from Chargers_to_CMS_Parser import parse_and_store_cancel_reservation_response  # Assuming this handles responses
 
 
@@ -270,6 +270,24 @@ class StatusRequest(BaseModel):
 class MakeQRCodes(BaseModel):
     charge_point_id:str
     Delete: Optional[bool] = None
+
+class ChargerToCMSQueryRequest(BaseModel):
+    filters: Dict[str, str]  # Dictionary of column name and value pairs for filtering
+    limit: Optional[str] = None  # Optional limit parameter in the format '1-100'
+    start_time: Optional[datetime] = None  # Start time for filtering
+    end_time: Optional[datetime] = None  # End time for filtering
+
+class CMSToChargerQueryRequest(BaseModel):
+    filters: Dict[str, str]  # Dictionary of column name and value pairs for filtering
+    limit: Optional[str] = None  # Optional limit parameter in the format '1-100'
+    start_time: Optional[datetime] = None  # Start time for filtering
+    end_time: Optional[datetime] = None  # End time for filtering
+
+class ChargerAnalyticsRequest(BaseModel):
+    start_time: Optional[datetime] = None  # Optional start time for the analytics period
+    end_time: Optional[datetime] = None  # Optional end time for the analytics period
+    charger_id: Optional[str] = None  # Optional filter by charger_id
+    include_charger_ids: Optional[bool] = False  # Whether to include the list of unique charger IDs
 
 # REST API endpoints
 
@@ -647,6 +665,444 @@ async def make_qr_code(request: MakeQRCodes):
         img_io.write(f.read())
     img_io.seek(0)
     return StreamingResponse(img_io, media_type="image/png")
+
+@app.post("/api/query_charger_to_cms")
+async def query_charger_to_cms(request: ChargerToCMSQueryRequest):
+    # Validate the limit parameter format if provided
+    if request.limit:
+        try:
+            start, end = map(int, request.limit.split('-'))
+            if start > end or start < 1 or end < 1:
+                raise ValueError
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid limit format. Use 'start-end' format, e.g., '1-100'.")
+    else:
+        start, end = 1, 100  # Default limit if not provided
+
+    # Ensure at least one filter is provided
+    if not request.filters:
+        raise HTTPException(status_code=400, detail="At least one column filter must be provided.")
+
+    # Dynamically build the SQL query
+    base_query = "SELECT * FROM Charger_to_CMS WHERE 1=1"
+    params = []
+
+    # Add filtering conditions
+    for column, value in request.filters.items():
+        # Check if the column exists in the table
+        column_check_query = """
+        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_NAME = 'Charger_to_CMS' AND COLUMN_NAME = %s AND TABLE_SCHEMA = DATABASE();
+        """
+        column_exists = db.execute_sql(column_check_query, (column,)).fetchone()[0]
+
+        if not column_exists:
+            raise HTTPException(status_code=404, detail=f"Column '{column}' not found in Charger_to_CMS table.")
+
+        # Add condition for the column
+        base_query += f" AND {column} = %s"
+        params.append(value)
+
+    # Apply the timestamp filter if provided
+    if request.start_time:
+        base_query += " AND timestamp >= %s"
+        params.append(request.start_time)
+    if request.end_time:
+        base_query += " AND timestamp <= %s"
+        params.append(request.end_time)
+
+    # Apply the limit if specified
+    base_query_with_limit = base_query + " ORDER BY id LIMIT %s, %s"
+    params_with_limit = params + [start - 1, end - start + 1]
+
+    # Execute the query with limit
+    cursor = db.execute_sql(base_query_with_limit, params_with_limit)
+    rows = cursor.fetchall()
+
+    # If no results found within the limit, remove the limit and fetch all matching rows
+    if not rows:
+        cursor = db.execute_sql(base_query + " ORDER BY id", params)
+        rows = cursor.fetchall()
+
+    columns = [column[0] for column in cursor.description]
+
+    # Convert the result to a list of dictionaries
+    results = []
+    for row in rows:
+        row_dict = dict(zip(columns, row))
+
+        # Deserialize the payload if it’s a JSON string
+        if 'payload' in row_dict and row_dict['payload']:
+            try:
+                row_dict['payload'] = json.loads(row_dict['payload'])
+            except json.JSONDecodeError:
+                # Leave the payload as it is if it's not a valid JSON string
+                pass
+
+        results.append(row_dict)
+
+    return {"data": results}
+
+@app.post("/api/query_cms_to_charger")
+async def query_cms_to_charger(request: CMSToChargerQueryRequest):
+    # Validate the limit parameter format if provided
+    if request.limit:
+        try:
+            start, end = map(int, request.limit.split('-'))
+            if start > end or start < 1 or end < 1:
+                raise ValueError
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid limit format. Use 'start-end' format, e.g., '1-100'.")
+    else:
+        start, end = 1, 100  # Default limit if not provided
+
+    # Ensure at least one filter is provided
+    if not request.filters:
+        raise HTTPException(status_code=400, detail="At least one column filter must be provided.")
+
+    # Dynamically build the SQL query
+    base_query = "SELECT * FROM CMS_to_Charger WHERE 1=1"
+    params = []
+
+    # Add filtering conditions
+    for column, value in request.filters.items():
+        # Check if the column exists in the table
+        column_check_query = """
+        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_NAME = 'CMS_to_Charger' AND COLUMN_NAME = %s AND TABLE_SCHEMA = DATABASE();
+        """
+        column_exists = db.execute_sql(column_check_query, (column,)).fetchone()[0]
+
+        if not column_exists:
+            raise HTTPException(status_code=404, detail=f"Column '{column}' not found in CMS_to_Charger table.")
+
+        # Add condition for the column
+        base_query += f" AND {column} = %s"
+        params.append(value)
+
+    # Apply the timestamp filter if provided
+    if request.start_time:
+        base_query += " AND timestamp >= %s"
+        params.append(request.start_time)
+    if request.end_time:
+        base_query += " AND timestamp <= %s"
+        params.append(request.end_time)
+
+    # Apply the limit if specified
+    base_query_with_limit = base_query + " ORDER BY id LIMIT %s, %s"
+    params_with_limit = params + [start - 1, end - start + 1]
+
+    # Execute the query with limit
+    cursor = db.execute_sql(base_query_with_limit, params_with_limit)
+    rows = cursor.fetchall()
+
+    # If no results found within the limit, remove the limit and fetch all matching rows
+    if not rows:
+        cursor = db.execute_sql(base_query + " ORDER BY id", params)
+        rows = cursor.fetchall()
+
+    columns = [column[0] for column in cursor.description]
+
+    # Convert the result to a list of dictionaries
+    results = []
+    for row in rows:
+        row_dict = dict(zip(columns, row))
+
+        # Deserialize the payload if it’s a JSON string
+        if 'payload' in row_dict and row_dict['payload']:
+            try:
+                row_dict['payload'] = json.loads(row_dict['payload'])
+            except json.JSONDecodeError:
+                # Leave the payload as it is if it's not a valid JSON string
+                pass
+
+        results.append(row_dict)
+
+    return {"data": results}
+
+@app.post("/api/query_transactions")
+async def query_transactions(request: ChargerToCMSQueryRequest):
+    # Validate the limit parameter format if provided
+    if request.limit:
+        try:
+            start, end = map(int, request.limit.split('-'))
+            if start > end or start < 1 or end < 1:
+                raise ValueError
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid limit format. Use 'start-end' format, e.g., '1-100'.")
+    else:
+        start, end = 1, 100  # Default limit if not provided
+
+    # Ensure at least one filter is provided
+    if not request.filters:
+        raise HTTPException(status_code=400, detail="At least one column filter must be provided.")
+
+    # Dynamically build the SQL query
+    base_query = "SELECT * FROM transactions WHERE 1=1"
+    params = []
+
+    # Add filtering conditions
+    for column, value in request.filters.items():
+        # Check if the column exists in the table
+        column_check_query = """
+        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_NAME = 'transactions' AND COLUMN_NAME = %s AND TABLE_SCHEMA = DATABASE();
+        """
+        column_exists = db.execute_sql(column_check_query, (column,)).fetchone()[0]
+
+        if not column_exists:
+            raise HTTPException(status_code=404, detail=f"Column '{column}' not found in transactions table.")
+
+        # Add condition for the column
+        base_query += f" AND {column} = %s"
+        params.append(value)
+
+    # Apply the timestamp filter if provided
+    if request.start_time:
+        base_query += " AND start_time >= %s"
+        params.append(request.start_time)
+    if request.end_time:
+        base_query += " AND stop_time <= %s"
+        params.append(request.end_time)
+
+    # Apply the limit if specified
+    base_query_with_limit = base_query + " ORDER BY id LIMIT %s, %s"
+    params_with_limit = params + [start - 1, end - start + 1]
+
+    # Execute the query with limit
+    cursor = db.execute_sql(base_query_with_limit, params_with_limit)
+    rows = cursor.fetchall()
+
+    # If no results found within the limit, remove the limit and fetch all matching rows
+    if not rows:
+        cursor = db.execute_sql(base_query + " ORDER BY id", params)
+        rows = cursor.fetchall()
+
+    columns = [column[0] for column in cursor.description]
+
+    # Convert the result to a list of dictionaries
+    results = [dict(zip(columns, row)) for row in rows]
+
+    return {"data": results}
+
+@app.post("/api/query_reservations")
+async def query_reservations(request: ChargerToCMSQueryRequest):
+    # Validate the limit parameter format if provided
+    if request.limit:
+        try:
+            start, end = map(int, request.limit.split('-'))
+            if start > end or start < 1 or end < 1:
+                raise ValueError
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid limit format. Use 'start-end' format, e.g., '1-100'.")
+    else:
+        start, end = 1, 100  # Default limit if not provided
+
+    # Ensure at least one filter is provided
+    if not request.filters:
+        raise HTTPException(status_code=400, detail="At least one column filter must be provided.")
+
+    # Dynamically build the SQL query
+    base_query = "SELECT * FROM reservations WHERE 1=1"
+    params = []
+
+    # Add filtering conditions
+    for column, value in request.filters.items():
+        # Check if the column exists in the table
+        column_check_query = """
+        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_NAME = 'reservations' AND COLUMN_NAME = %s AND TABLE_SCHEMA = DATABASE();
+        """
+        column_exists = db.execute_sql(column_check_query, (column,)).fetchone()[0]
+
+        if not column_exists:
+            raise HTTPException(status_code=404, detail=f"Column '{column}' not found in reservations table.")
+
+        # Add condition for the column
+        base_query += f" AND {column} = %s"
+        params.append(value)
+
+    # Apply the timestamp filter if provided
+    if request.start_time:
+        base_query += " AND reserved_at >= %s"
+        params.append(request.start_time)
+    if request.end_time:
+        base_query += " AND reserved_at <= %s"
+        params.append(request.end_time)
+
+    # Apply the limit if specified
+    base_query_with_limit = base_query + " ORDER BY id LIMIT %s, %s"
+    params_with_limit = params + [start - 1, end - start + 1]
+
+    # Execute the query with limit
+    cursor = db.execute_sql(base_query_with_limit, params_with_limit)
+    rows = cursor.fetchall()
+
+    # If no results found within the limit, remove the limit and fetch all matching rows
+    if not rows:
+        cursor = db.execute_sql(base_query + " ORDER BY id", params)
+        rows = cursor.fetchall()
+
+    columns = [column[0] for column in cursor.description]
+
+    # Convert the result to a list of dictionaries
+    results = [dict(zip(columns, row)) for row in rows]
+
+    return {"data": results}
+
+def format_duration(seconds):
+    """Convert seconds into a human-readable format: years, days, hours, minutes, seconds."""
+    years, remainder = divmod(seconds, 31536000)  # 365 * 24 * 60 * 60
+    days, remainder = divmod(remainder, 86400)    # 24 * 60 * 60
+    hours, remainder = divmod(remainder, 3600)    # 60 * 60
+    minutes, seconds = divmod(remainder, 60)
+
+    parts = []
+    if years > 0:
+        parts.append(f"{int(years)} years")
+    if days > 0:
+        parts.append(f"{int(days)} days")
+    if hours > 0:
+        parts.append(f"{int(hours)} hours")
+    if minutes > 0:
+        parts.append(f"{int(minutes)} minutes")
+    if seconds > 0:
+        parts.append(f"{int(seconds)} seconds")
+
+    return ", ".join(parts) if parts else "0 seconds"
+
+@app.post("/api/charger_analytics")
+async def charger_analytics(request: ChargerAnalyticsRequest):
+    # Initialize variables to store the results
+    start_time = request.start_time or datetime.min.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_time = request.end_time or datetime.max.replace(hour=23, minute=59, second=59, microsecond=0)
+    analytics = {}
+
+    # Construct dynamic WHERE clauses based on provided filters
+    where_clauses = ["timestamp BETWEEN %s AND %s"]
+    params = [start_time, end_time]
+
+    if request.charger_id:
+        where_clauses.append("charger_id = %s")
+        params.append(request.charger_id)
+
+    where_clause = " AND ".join(where_clauses)
+
+    # Step 1: Calculate the uptime for each charger
+    uptime_query = f"""
+    SELECT charger_id, timestamp
+    FROM Charger_to_CMS
+    WHERE {where_clause}
+    ORDER BY charger_id, timestamp
+    """
+    
+    # Execute the query with parameters
+    cursor = db.execute_sql(uptime_query, params)
+    uptime_results = cursor.fetchall()
+
+    if not uptime_results:
+        return {"error": "No data found for the specified time range and charger."}
+
+    charger_uptime_data = {}
+    current_charger = None
+    last_timestamp = None
+
+    for row in uptime_results:
+        charger_id, timestamp = row
+
+        if charger_id != current_charger:
+            if current_charger:
+                # Calculate uptime for the previous charger
+                charger_uptime_data[current_charger]["total_uptime_seconds"] += (last_timestamp - first_message).total_seconds() + 30
+            
+            # Initialize new charger data
+            current_charger = charger_id
+            charger_uptime_data[current_charger] = {
+                "total_uptime_seconds": 0,
+                "total_possible_uptime_seconds": (end_time - start_time).total_seconds(),
+                "charger_id": charger_id,
+                "total_time_occupied_seconds": 0,  # Initialize to 0
+                "session_durations": [],
+                "peak_usage_times": [0] * 24  # 24-hour time slots
+            }
+            first_message = timestamp
+        else:
+            if (timestamp - last_timestamp).total_seconds() > 30:
+                # The charger was offline for more than 30 seconds
+                charger_uptime_data[current_charger]["total_uptime_seconds"] += (last_timestamp - first_message).total_seconds() + 30
+                first_message = timestamp
+
+        last_timestamp = timestamp
+
+    # Finalize the last charger's uptime
+    charger_uptime_data[current_charger]["total_uptime_seconds"] += (last_timestamp - first_message).total_seconds() + 30
+
+    # Step 2: Calculate total number of transactions, electricity used, and session-related metrics
+    for charger_id in charger_uptime_data.keys():
+        transaction_query = f"""
+        SELECT COUNT(*), SUM(total_consumption), 
+               SUM(TIMESTAMPDIFF(SECOND, start_time, stop_time)) as total_time_occupied
+        FROM transactions 
+        WHERE start_time BETWEEN %s AND %s AND charger_id = %s
+        """
+        # Execute the query with parameters
+        cursor = db.execute_sql(transaction_query, [start_time, end_time, charger_id])
+        total_transactions, total_electricity_used, total_time_occupied = cursor.fetchone()
+
+        total_electricity_used = total_electricity_used or 0.0
+        total_time_occupied = total_time_occupied or 0  # Ensure total_time_occupied is not None
+
+        # Calculate session durations and peak usage times
+        session_query = f"""
+        SELECT start_time, TIMESTAMPDIFF(SECOND, start_time, stop_time) as session_duration
+        FROM transactions
+        WHERE start_time BETWEEN %s AND %s AND charger_id = %s
+        """
+        # Execute the query with parameters
+        cursor = db.execute_sql(session_query, [start_time, end_time, charger_id])
+        sessions = cursor.fetchall()
+
+        for start_time, session_duration in sessions:
+            charger_uptime_data[charger_id]["session_durations"].append(session_duration)
+            hour_of_day = start_time.hour
+            charger_uptime_data[charger_id]["peak_usage_times"][hour_of_day] += 1
+
+        # Calculate peak usage hours
+        max_usage_count = max(charger_uptime_data[charger_id]["peak_usage_times"])
+        peak_usage_hours = [f"{hour}:00 - {hour + 1}:00" for hour, count in enumerate(charger_uptime_data[charger_id]["peak_usage_times"]) if count == max_usage_count]
+
+        if max_usage_count == 0:
+            peak_usage_hours = ["No peak usage times - charger was not used during this period."]
+
+        # Compile the results
+        uptime_seconds = charger_uptime_data[charger_id]["total_uptime_seconds"]
+        uptime_percentage = round((uptime_seconds / charger_uptime_data[charger_id]["total_possible_uptime_seconds"]) * 100, 3)
+        average_session_duration_seconds = sum(charger_uptime_data[charger_id]["session_durations"]) / total_transactions if total_transactions > 0 else 0
+        occupancy_rate = round((total_time_occupied / charger_uptime_data[charger_id]["total_possible_uptime_seconds"]) * 100, 3)
+
+        analytics_data = {
+            "charger_id": charger_id,
+            "timestamp": datetime.now(),
+            "total_uptime": format_duration(uptime_seconds),
+            "uptime_percentage": uptime_percentage,
+            "total_transactions": total_transactions,
+            "total_electricity_used_kwh": total_electricity_used,
+            "occupancy_rate_percentage": occupancy_rate,
+            "average_session_duration": format_duration(average_session_duration_seconds),
+            "peak_usage_times": ", ".join(peak_usage_hours)  # Store as a comma-separated string
+        }
+
+        # Save analytics data to the database
+        Analytics.create(**analytics_data)
+
+        analytics[charger_id] = analytics_data
+
+    # If a specific charger ID is requested, return data only for that charger
+    if request.charger_id:
+        return analytics.get(request.charger_id, {"error": "Charger ID not found."})
+    
+    return {"analytics": analytics}
+
 
 if __name__ == "__main__":
     import uvicorn
