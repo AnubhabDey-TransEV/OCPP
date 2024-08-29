@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timezone
 import pytz
 import json
+import uuid
 from dbconn import get_database  # Import the get_database function to get the database connection
 
 # Configure logging
@@ -125,6 +126,7 @@ def store_ocpp_message(charger_id, message_type, message_category, **kwargs):
         logging.debug(f"original_message_time: {type(original_message_time)} = {original_message_time}")
 
         data = {
+            "uuiddb": str(uuid.uuid4()),
             "message_type": message_type,
             "charger_id": charger_id,
             "message_category": message_category,

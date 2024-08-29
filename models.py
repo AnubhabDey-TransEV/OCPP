@@ -1,15 +1,22 @@
-from peewee import Model, AutoField, CharField, DateTimeField, IntegerField, FloatField, BlobField
+from peewee import Model, AutoField, CharField, DateTimeField, IntegerField, FloatField, UUIDField
+import uuid
 from dbconn import get_database
 
 # Get the database connection
 db = get_database()
+
+def getUUID():
+    return str(uuid.uuid4())
+
+print (getUUID())
 
 class BaseModel(Model):
     class Meta:
         database = db
 
 class Transaction(BaseModel):
-    id = AutoField()
+
+    uuiddb = CharField(default=getUUID)    
     charger_id = CharField()
     connector_id = IntegerField()
     meter_start = FloatField()
@@ -25,7 +32,7 @@ class Transaction(BaseModel):
         )
 
 class Reservation(BaseModel):
-    id = AutoField()
+    uuiddb = CharField(default=getUUID)
     charger_id = CharField()
     connector_id = IntegerField()
     id_tag = CharField()
@@ -40,7 +47,8 @@ class Reservation(BaseModel):
         table_name = 'reservations'
 
 class OCPPMessageCMS(BaseModel):
-    id = AutoField()
+
+    uuiddb = CharField(default=getUUID)
     message_type = CharField()
     charger_id = CharField()
     message_category = CharField()
@@ -52,7 +60,7 @@ class OCPPMessageCMS(BaseModel):
         table_name = 'CMS_to_Charger'
 
 class OCPPMessageCharger(BaseModel):
-    id = AutoField()
+    uuiddb = CharField(default=getUUID)
     message_type = CharField()
     charger_id = CharField()
     message_category = CharField()
@@ -64,7 +72,7 @@ class OCPPMessageCharger(BaseModel):
         table_name = 'Charger_to_CMS'
 
 class QRCodeData(BaseModel):
-    id = AutoField()
+    uuiddb = CharField(default=getUUID)
     charger_id = CharField()
     charger_serial_number = CharField()
     image_path = CharField()  # Add this field
@@ -75,6 +83,7 @@ class QRCodeData(BaseModel):
         table_name = 'qr_code_data'
 
 class Analytics(BaseModel):
+    uuiddb = CharField(default=getUUID)
     charger_id = CharField()
     timestamp = DateTimeField()
     total_uptime = CharField()  # Storing in a human-readable format

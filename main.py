@@ -136,6 +136,26 @@ class CentralSystem:
             return False
         
         return True
+    
+    async def getChargerSerialNum(self, uid: str) -> str:
+        first_api_url = config("APICHARGERDATA")
+        apiauthkey = config("APIAUTHKEY")
+        timeout = 120
+        response = requests.get(first_api_url, headers={"apiauthkey": apiauthkey}, timeout=timeout)
+        
+        if response.status_code != 200:
+            logging.error("Error fetching charger data from API")
+            raise HTTPException(status_code=500, detail="Error fetching charger data from API")
+        
+        charger_data = response.json().get("data", [])
+        charger = next((item for item in charger_data if item["uid"] == uid), None)
+        
+        if not charger:
+            logging.error(f"Charger with UID {uid} not found in the system.")
+            raise HTTPException(status_code=404, detail="Charger not found")
+        
+        return charger["Chargerserialnum"]
+
 
     async def send_request(self, charge_point_id, request_method, *args, **kwargs):
         charge_point = self.charge_points.get(charge_point_id)
@@ -205,30 +225,30 @@ async def websocket_endpoint(websocket: WebSocket, charger_id: str):
 
 # FastAPI request models
 class ChangeAvailabilityRequest(BaseModel):
-    charge_point_id: str
+    uid: str
     connector_id: int
     type: str
 
 class StartTransactionRequest(BaseModel):
-    charge_point_id: str
+    uid: str
     id_tag: str
     connector_id: int
 
 class StopTransactionRequest(BaseModel):
-    charge_point_id: str
+    uid: str
     transaction_id: int
 
 class ChangeConfigurationRequest(BaseModel):
-    charge_point_id: str
+    uid: str
     key: str
     value: str
 
 class UnlockConnectorRequest(BaseModel):
-    charge_point_id: str
+    uid: str
     connector_id: int
 
 class GetDiagnosticsRequest(BaseModel):
-    charge_point_id: str
+    uid: str
     location: str
     start_time: Optional[str]
     stop_time: Optional[str]
@@ -236,52 +256,54 @@ class GetDiagnosticsRequest(BaseModel):
     retry_interval: Optional[int]
 
 class UpdateFirmwareRequest(BaseModel):
-    charge_point_id: str
+    uid: str
     location: str
     retrieve_date: str
     retries: Optional[int]
     retry_interval: Optional[int]
 
 class ResetRequest(BaseModel):
-    charge_point_id: str
+    uid: str
     type: str
 
 class TriggerMessageRequest(BaseModel):
-    charge_point_id: str
+    uid: str
     requested_message: str
 
 class ReserveNowRequest(BaseModel):
-    charge_point_id: str
+    uid: str
     connector_id: int
     expiry_date: str
     id_tag: str
     reservation_id: int
 
 class CancelReservationRequest(BaseModel):
-    charge_point_id: str
+    uid: str
     reservation_id: int
 
 class GetConfigurationRequest(BaseModel):
-    charge_point_id: str
+    uid: str
 
 class StatusRequest(BaseModel):
-    charge_point_id: str
+    uid: str
 
 class MakeQRCodes(BaseModel):
-    charge_point_id:str
+    uid:str
     Delete: Optional[bool] = None
 
 class ChargerToCMSQueryRequest(BaseModel):
-    filters: Dict[str, str]  # Dictionary of column name and value pairs for filtering
+    uid: Optional[str] = None  # Optional UID for filtering by charge_point_id
+    filters: Optional[Dict[str, str]] = None  # Optional dictionary of column name and value pairs for filtering
     limit: Optional[str] = None  # Optional limit parameter in the format '1-100'
-    start_time: Optional[datetime] = None  # Start time for filtering
-    end_time: Optional[datetime] = None  # End time for filtering
+    start_time: Optional[datetime] = None  # Optional start time for filtering
+    end_time: Optional[datetime] = None  # Optional end time for filtering
 
 class CMSToChargerQueryRequest(BaseModel):
-    filters: Dict[str, str]  # Dictionary of column name and value pairs for filtering
+    uid: Optional[str] = None  # Optional UID for filtering by charge_point_id
+    filters: Optional[Dict[str, str]] = None  # Optional dictionary of column name and value pairs for filtering
     limit: Optional[str] = None  # Optional limit parameter in the format '1-100'
-    start_time: Optional[datetime] = None  # Start time for filtering
-    end_time: Optional[datetime] = None  # End time for filtering
+    start_time: Optional[datetime] = None  # Optional start time for filtering
+    end_time: Optional[datetime] = None  # Optional end time for filtering
 
 class ChargerAnalyticsRequest(BaseModel):
     start_time: Optional[datetime] = None  # Optional start time for the analytics period
@@ -293,8 +315,14 @@ class ChargerAnalyticsRequest(BaseModel):
 
 @app.post("/api/change_availability")
 async def change_availability(request: ChangeAvailabilityRequest):
+
+    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    
+    # Form the complete charge_point_id
+    charge_point_id = f"{request.uid}/{charger_serialnum}"
+
     response = await central_system.send_request(
-        charge_point_id=request.charge_point_id,
+        charge_point_id=charge_point_id,
         request_method='change_availability',
         connector_id=request.connector_id,
         type=request.type
@@ -305,8 +333,14 @@ async def change_availability(request: ChangeAvailabilityRequest):
 
 @app.post("/api/start_transaction")
 async def start_transaction(request: StartTransactionRequest):
+
+    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    
+    # Form the complete charge_point_id
+    charge_point_id = f"{request.uid}/{charger_serialnum}"
+
     response = await central_system.send_request(
-        charge_point_id=request.charge_point_id,
+        charge_point_id=charge_point_id,
         request_method='remote_start_transaction',
         id_tag=request.id_tag,
         connector_id=request.connector_id
@@ -317,8 +351,14 @@ async def start_transaction(request: StartTransactionRequest):
 
 @app.post("/api/stop_transaction")
 async def stop_transaction(request: StopTransactionRequest):
+
+    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    
+    # Form the complete charge_point_id
+    charge_point_id = f"{request.uid}/{charger_serialnum}"
+
     response = await central_system.send_request(
-        charge_point_id=request.charge_point_id,
+        charge_point_id=charge_point_id,
         request_method='remote_stop_transaction',
         transaction_id=request.transaction_id
     )
@@ -328,8 +368,14 @@ async def stop_transaction(request: StopTransactionRequest):
 
 @app.post("/api/change_configuration")
 async def change_configuration(request: ChangeConfigurationRequest):
+
+    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    
+    # Form the complete charge_point_id
+    charge_point_id = f"{request.uid}/{charger_serialnum}"
+
     response = await central_system.send_request(
-        charge_point_id=request.charge_point_id,
+        charge_point_id=charge_point_id,
         request_method='change_configuration',
         key=request.key,
         value=request.value
@@ -340,8 +386,14 @@ async def change_configuration(request: ChangeConfigurationRequest):
 
 @app.post("/api/clear_cache")
 async def clear_cache(request: GetConfigurationRequest):
+
+    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    
+    # Form the complete charge_point_id
+    charge_point_id = f"{request.uid}/{charger_serialnum}"
+
     response = await central_system.send_request(
-        charge_point_id=request.charge_point_id,
+        charge_point_id=charge_point_id,
         request_method='clear_cache'
     )
     if isinstance(response, dict) and "error" in response:
@@ -350,8 +402,14 @@ async def clear_cache(request: GetConfigurationRequest):
 
 @app.post("/api/unlock_connector")
 async def unlock_connector(request: UnlockConnectorRequest):
+
+    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    
+    # Form the complete charge_point_id
+    charge_point_id = f"{request.uid}/{charger_serialnum}"
+
     response = await central_system.send_request(
-        charge_point_id=request.charge_point_id,
+        charge_point_id=charge_point_id,
         request_method='unlock_connector',
         connector_id=request.connector_id
     )
@@ -361,8 +419,14 @@ async def unlock_connector(request: UnlockConnectorRequest):
 
 @app.post("/api/get_diagnostics")
 async def get_diagnostics(request: GetDiagnosticsRequest):
+
+    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    
+    # Form the complete charge_point_id
+    charge_point_id = f"{request.uid}/{charger_serialnum}"
+
     response = await central_system.send_request(
-        charge_point_id=request.charge_point_id,
+        charge_point_id=charge_point_id,
         request_method='get_diagnostics',
         location=request.location,
         start_time=request.start_time,
@@ -376,8 +440,14 @@ async def get_diagnostics(request: GetDiagnosticsRequest):
 
 @app.post("/api/update_firmware")
 async def update_firmware(request: UpdateFirmwareRequest):
+
+    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    
+    # Form the complete charge_point_id
+    charge_point_id = f"{request.uid}/{charger_serialnum}"
+
     response = await central_system.send_request(
-        charge_point_id=request.charge_point_id,
+        charge_point_id=charge_point_id,
         request_method='update_firmware',
         location=request.location,
         retrieve_date=request.retrieve_date,
@@ -390,8 +460,14 @@ async def update_firmware(request: UpdateFirmwareRequest):
 
 @app.post("/api/reset")
 async def reset(request: ResetRequest):
+
+    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    
+    # Form the complete charge_point_id
+    charge_point_id = f"{request.uid}/{charger_serialnum}"
+
     response = await central_system.send_request(
-        charge_point_id=request.charge_point_id,
+        charge_point_id=charge_point_id,
         request_method='reset',
         type=request.type
     )
@@ -401,8 +477,14 @@ async def reset(request: ResetRequest):
 
 @app.post("/api/get_configuration")
 async def get_configuration(request: GetConfigurationRequest):
+
+    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    
+    # Form the complete charge_point_id
+    charge_point_id = f"{request.uid}/{charger_serialnum}"
+
     response = await central_system.send_request(
-        charge_point_id=request.charge_point_id,
+        charge_point_id=charge_point_id,
         request_method='get_configuration'
     )
     if isinstance(response, dict) and "error" in response:
@@ -411,7 +493,13 @@ async def get_configuration(request: GetConfigurationRequest):
 
 @app.post("/api/status")
 async def get_charge_point_status(request: StatusRequest):
-    charge_point_id = request.charge_point_id
+
+    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    
+    # Form the complete charge_point_id
+    charge_point_id = f"{request.uid}/{charger_serialnum}"
+
+    charge_point_id = charge_point_id
     
     if charge_point_id == "all_online":
         all_online_statuses = {}
@@ -540,8 +628,14 @@ async def get_charge_point_status(request: StatusRequest):
 
 @app.post("/api/trigger_message")
 async def trigger_message(request: TriggerMessageRequest):
+
+    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    
+    # Form the complete charge_point_id
+    charge_point_id = f"{request.uid}/{charger_serialnum}"
+
     response = await central_system.send_request(
-        charge_point_id=request.charge_point_id,
+        charge_point_id=charge_point_id,
         request_method='trigger_message',
         requested_message=request.requested_message
     )
@@ -551,8 +645,14 @@ async def trigger_message(request: TriggerMessageRequest):
 
 @app.post("/api/reserve_now")
 async def reserve_now(request: ReserveNowRequest):
+
+    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    
+    # Form the complete charge_point_id
+    charge_point_id = f"{request.uid}/{charger_serialnum}"
+
     response = await central_system.send_request(
-        charge_point_id=request.charge_point_id,
+        charge_point_id=charge_point_id,
         request_method='reserve_now',
         connector_id=request.connector_id,
         expiry_date=request.expiry_date,
@@ -565,8 +665,14 @@ async def reserve_now(request: ReserveNowRequest):
 
 @app.post("/api/cancel_reservation")
 async def cancel_reservation(request: CancelReservationRequest):
+
+    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    
+    # Form the complete charge_point_id
+    charge_point_id = f"{request.uid}/{charger_serialnum}"
+
     response = await central_system.cancel_reservation(
-        charge_point_id=request.charge_point_id,
+        charge_point_id=charge_point_id,
         reservation_id=request.reservation_id
     )
     if isinstance((response, dict) and "error" in response):
@@ -579,7 +685,8 @@ async def make_qr_code(request: MakeQRCodes):
     apiauthkey = config("APIAUTHKEY")
 
     # Extract uid and ChargerSerialNum from charge_point_id
-    uid, charger_serialnum = request.charge_point_id.split("/")
+    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    uid=request.uid
     
     # Get the QR code directory path from the environment variable
     qr_path = config("QRPATH")
@@ -668,40 +775,38 @@ async def make_qr_code(request: MakeQRCodes):
 
 @app.post("/api/query_charger_to_cms")
 async def query_charger_to_cms(request: ChargerToCMSQueryRequest):
-    # Validate the limit parameter format if provided
-    if request.limit:
-        try:
-            start, end = map(int, request.limit.split('-'))
-            if start > end or start < 1 or end < 1:
-                raise ValueError
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid limit format. Use 'start-end' format, e.g., '1-100'.")
-    else:
-        start, end = 1, 100  # Default limit if not provided
-
-    # Ensure at least one filter is provided
-    if not request.filters:
-        raise HTTPException(status_code=400, detail="At least one column filter must be provided.")
-
-    # Dynamically build the SQL query
+    # Initialize the base query
     base_query = "SELECT * FROM Charger_to_CMS WHERE 1=1"
     params = []
 
-    # Add filtering conditions
-    for column, value in request.filters.items():
-        # Check if the column exists in the table
-        column_check_query = """
-        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
-        WHERE TABLE_NAME = 'Charger_to_CMS' AND COLUMN_NAME = %s AND TABLE_SCHEMA = DATABASE();
-        """
-        column_exists = db.execute_sql(column_check_query, (column,)).fetchone()[0]
+    # Handle the uid filter, if provided
+    if request.uid:
+        # Fetch the serial number using the uid
+        charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+        
+        # Form the complete charge_point_id
+        charge_point_id = f"{request.uid}/{charger_serialnum}"
+        
+        # Apply the charge_point_id filter
+        base_query += " AND charger_id = %s"
+        params.append(charge_point_id)
+    
+    # Add other filtering conditions if any
+    if request.filters:
+        for column, value in request.filters.items():
+            # Check if the column exists in the table
+            column_check_query = """
+            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_NAME = 'Charger_to_CMS' AND COLUMN_NAME = %s AND TABLE_SCHEMA = DATABASE();
+            """
+            column_exists = db.execute_sql(column_check_query, (column,)).fetchone()[0]
 
-        if not column_exists:
-            raise HTTPException(status_code=404, detail=f"Column '{column}' not found in Charger_to_CMS table.")
+            if not column_exists:
+                raise HTTPException(status_code=404, detail=f"Column '{column}' not found in Charger_to_CMS table.")
 
-        # Add condition for the column
-        base_query += f" AND {column} = %s"
-        params.append(value)
+            # Add condition for the column
+            base_query += f" AND {column} = %s"
+            params.append(value)
 
     # Apply the timestamp filter if provided
     if request.start_time:
@@ -712,17 +817,21 @@ async def query_charger_to_cms(request: ChargerToCMSQueryRequest):
         params.append(request.end_time)
 
     # Apply the limit if specified
-    base_query_with_limit = base_query + " ORDER BY id LIMIT %s, %s"
-    params_with_limit = params + [start - 1, end - start + 1]
+    if request.limit:
+        try:
+            start, end = map(int, request.limit.split('-'))
+            if start > end or start < 1 or end < 1:
+                raise ValueError
+            base_query += " ORDER BY id LIMIT %s, %s"
+            params += [start - 1, end - start + 1]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid limit format. Use 'start-end' format, e.g., '1-100'.")
+    else:
+        base_query += " ORDER BY id"
 
-    # Execute the query with limit
-    cursor = db.execute_sql(base_query_with_limit, params_with_limit)
+    # Execute the query
+    cursor = db.execute_sql(base_query, params)
     rows = cursor.fetchall()
-
-    # If no results found within the limit, remove the limit and fetch all matching rows
-    if not rows:
-        cursor = db.execute_sql(base_query + " ORDER BY id", params)
-        rows = cursor.fetchall()
 
     columns = [column[0] for column in cursor.description]
 
@@ -745,40 +854,38 @@ async def query_charger_to_cms(request: ChargerToCMSQueryRequest):
 
 @app.post("/api/query_cms_to_charger")
 async def query_cms_to_charger(request: CMSToChargerQueryRequest):
-    # Validate the limit parameter format if provided
-    if request.limit:
-        try:
-            start, end = map(int, request.limit.split('-'))
-            if start > end or start < 1 or end < 1:
-                raise ValueError
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid limit format. Use 'start-end' format, e.g., '1-100'.")
-    else:
-        start, end = 1, 100  # Default limit if not provided
-
-    # Ensure at least one filter is provided
-    if not request.filters:
-        raise HTTPException(status_code=400, detail="At least one column filter must be provided.")
-
-    # Dynamically build the SQL query
+    # Initialize the base query
     base_query = "SELECT * FROM CMS_to_Charger WHERE 1=1"
     params = []
 
-    # Add filtering conditions
-    for column, value in request.filters.items():
-        # Check if the column exists in the table
-        column_check_query = """
-        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
-        WHERE TABLE_NAME = 'CMS_to_Charger' AND COLUMN_NAME = %s AND TABLE_SCHEMA = DATABASE();
-        """
-        column_exists = db.execute_sql(column_check_query, (column,)).fetchone()[0]
+    # Handle the uid filter, if provided
+    if request.uid:
+        # Fetch the serial number using the uid
+        charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+        
+        # Form the complete charge_point_id
+        charge_point_id = f"{request.uid}/{charger_serialnum}"
+        
+        # Apply the charge_point_id filter
+        base_query += " AND charger_id = %s"
+        params.append(charge_point_id)
+    
+    # Add other filtering conditions if any
+    if request.filters:
+        for column, value in request.filters.items():
+            # Check if the column exists in the table
+            column_check_query = """
+            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_NAME = 'CMS_to_Charger' AND COLUMN_NAME = %s AND TABLE_SCHEMA = DATABASE();
+            """
+            column_exists = db.execute_sql(column_check_query, (column,)).fetchone()[0]
 
-        if not column_exists:
-            raise HTTPException(status_code=404, detail=f"Column '{column}' not found in CMS_to_Charger table.")
+            if not column_exists:
+                raise HTTPException(status_code=404, detail=f"Column '{column}' not found in CMS_to_Charger table.")
 
-        # Add condition for the column
-        base_query += f" AND {column} = %s"
-        params.append(value)
+            # Add condition for the column
+            base_query += f" AND {column} = %s"
+            params.append(value)
 
     # Apply the timestamp filter if provided
     if request.start_time:
@@ -789,17 +896,21 @@ async def query_cms_to_charger(request: CMSToChargerQueryRequest):
         params.append(request.end_time)
 
     # Apply the limit if specified
-    base_query_with_limit = base_query + " ORDER BY id LIMIT %s, %s"
-    params_with_limit = params + [start - 1, end - start + 1]
+    if request.limit:
+        try:
+            start, end = map(int, request.limit.split('-'))
+            if start > end or start < 1 or end < 1:
+                raise ValueError
+            base_query += " ORDER BY id LIMIT %s, %s"
+            params += [start - 1, end - start + 1]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid limit format. Use 'start-end' format, e.g., '1-100'.")
+    else:
+        base_query += " ORDER BY id"
 
-    # Execute the query with limit
-    cursor = db.execute_sql(base_query_with_limit, params_with_limit)
+    # Execute the query
+    cursor = db.execute_sql(base_query, params)
     rows = cursor.fetchall()
-
-    # If no results found within the limit, remove the limit and fetch all matching rows
-    if not rows:
-        cursor = db.execute_sql(base_query + " ORDER BY id", params)
-        rows = cursor.fetchall()
 
     columns = [column[0] for column in cursor.description]
 
@@ -822,40 +933,38 @@ async def query_cms_to_charger(request: CMSToChargerQueryRequest):
 
 @app.post("/api/query_transactions")
 async def query_transactions(request: ChargerToCMSQueryRequest):
-    # Validate the limit parameter format if provided
-    if request.limit:
-        try:
-            start, end = map(int, request.limit.split('-'))
-            if start > end or start < 1 or end < 1:
-                raise ValueError
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid limit format. Use 'start-end' format, e.g., '1-100'.")
-    else:
-        start, end = 1, 100  # Default limit if not provided
-
-    # Ensure at least one filter is provided
-    if not request.filters:
-        raise HTTPException(status_code=400, detail="At least one column filter must be provided.")
-
-    # Dynamically build the SQL query
+    # Initialize the base query
     base_query = "SELECT * FROM transactions WHERE 1=1"
     params = []
 
-    # Add filtering conditions
-    for column, value in request.filters.items():
-        # Check if the column exists in the table
-        column_check_query = """
-        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
-        WHERE TABLE_NAME = 'transactions' AND COLUMN_NAME = %s AND TABLE_SCHEMA = DATABASE();
-        """
-        column_exists = db.execute_sql(column_check_query, (column,)).fetchone()[0]
+    # Handle the uid filter, if provided
+    if request.uid:
+        # Fetch the serial number using the uid
+        charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+        
+        # Form the complete charge_point_id
+        charge_point_id = f"{request.uid}/{charger_serialnum}"
+        
+        # Apply the charge_point_id filter
+        base_query += " AND charger_id = %s"
+        params.append(charge_point_id)
+    
+    # Add other filtering conditions if any
+    if request.filters:
+        for column, value in request.filters.items():
+            # Check if the column exists in the table
+            column_check_query = """
+            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_NAME = 'transactions' AND COLUMN_NAME = %s AND TABLE_SCHEMA = DATABASE();
+            """
+            column_exists = db.execute_sql(column_check_query, (column,)).fetchone()[0]
 
-        if not column_exists:
-            raise HTTPException(status_code=404, detail=f"Column '{column}' not found in transactions table.")
+            if not column_exists:
+                raise HTTPException(status_code=404, detail=f"Column '{column}' not found in transactions table.")
 
-        # Add condition for the column
-        base_query += f" AND {column} = %s"
-        params.append(value)
+            # Add condition for the column
+            base_query += f" AND {column} = %s"
+            params.append(value)
 
     # Apply the timestamp filter if provided
     if request.start_time:
@@ -866,61 +975,66 @@ async def query_transactions(request: ChargerToCMSQueryRequest):
         params.append(request.end_time)
 
     # Apply the limit if specified
-    base_query_with_limit = base_query + " ORDER BY id LIMIT %s, %s"
-    params_with_limit = params + [start - 1, end - start + 1]
-
-    # Execute the query with limit
-    cursor = db.execute_sql(base_query_with_limit, params_with_limit)
-    rows = cursor.fetchall()
-
-    # If no results found within the limit, remove the limit and fetch all matching rows
-    if not rows:
-        cursor = db.execute_sql(base_query + " ORDER BY id", params)
-        rows = cursor.fetchall()
-
-    columns = [column[0] for column in cursor.description]
-
-    # Convert the result to a list of dictionaries
-    results = [dict(zip(columns, row)) for row in rows]
-
-    return {"data": results}
-
-@app.post("/api/query_reservations")
-async def query_reservations(request: ChargerToCMSQueryRequest):
-    # Validate the limit parameter format if provided
     if request.limit:
         try:
             start, end = map(int, request.limit.split('-'))
             if start > end or start < 1 or end < 1:
                 raise ValueError
+            base_query += " ORDER BY id LIMIT %s, %s"
+            params += [start - 1, end - start + 1]
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid limit format. Use 'start-end' format, e.g., '1-100'.")
     else:
-        start, end = 1, 100  # Default limit if not provided
+        base_query += " ORDER BY id"
 
-    # Ensure at least one filter is provided
-    if not request.filters:
-        raise HTTPException(status_code=400, detail="At least one column filter must be provided.")
+    # Execute the query
+    cursor = db.execute_sql(base_query, params)
+    rows = cursor.fetchall()
 
-    # Dynamically build the SQL query
+    columns = [column[0] for column in cursor.description]
+
+    # Convert the result to a list of dictionaries
+    results = []
+    for row in rows:
+        row_dict = dict(zip(columns, row))
+        results.append(row_dict)
+
+    return {"data": results}
+
+@app.post("/api/query_reservations")
+async def query_reservations(request: ChargerToCMSQueryRequest):
+    # Initialize the base query
     base_query = "SELECT * FROM reservations WHERE 1=1"
     params = []
 
-    # Add filtering conditions
-    for column, value in request.filters.items():
-        # Check if the column exists in the table
-        column_check_query = """
-        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
-        WHERE TABLE_NAME = 'reservations' AND COLUMN_NAME = %s AND TABLE_SCHEMA = DATABASE();
-        """
-        column_exists = db.execute_sql(column_check_query, (column,)).fetchone()[0]
+    # Handle the uid filter, if provided
+    if request.uid:
+        # Fetch the serial number using the uid
+        charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+        
+        # Form the complete charge_point_id
+        charge_point_id = f"{request.uid}/{charger_serialnum}"
+        
+        # Apply the charge_point_id filter
+        base_query += " AND charger_id = %s"
+        params.append(charge_point_id)
+    
+    # Add other filtering conditions if any
+    if request.filters:
+        for column, value in request.filters.items():
+            # Check if the column exists in the table
+            column_check_query = """
+            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_NAME = 'reservations' AND COLUMN_NAME = %s AND TABLE_SCHEMA = DATABASE();
+            """
+            column_exists = db.execute_sql(column_check_query, (column,)).fetchone()[0]
 
-        if not column_exists:
-            raise HTTPException(status_code=404, detail=f"Column '{column}' not found in reservations table.")
+            if not column_exists:
+                raise HTTPException(status_code=404, detail=f"Column '{column}' not found in reservations table.")
 
-        # Add condition for the column
-        base_query += f" AND {column} = %s"
-        params.append(value)
+            # Add condition for the column
+            base_query += f" AND {column} = %s"
+            params.append(value)
 
     # Apply the timestamp filter if provided
     if request.start_time:
@@ -931,22 +1045,29 @@ async def query_reservations(request: ChargerToCMSQueryRequest):
         params.append(request.end_time)
 
     # Apply the limit if specified
-    base_query_with_limit = base_query + " ORDER BY id LIMIT %s, %s"
-    params_with_limit = params + [start - 1, end - start + 1]
+    if request.limit:
+        try:
+            start, end = map(int, request.limit.split('-'))
+            if start > end or start < 1 or end < 1:
+                raise ValueError
+            base_query += " ORDER BY id LIMIT %s, %s"
+            params += [start - 1, end - start + 1]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid limit format. Use 'start-end' format, e.g., '1-100'.")
+    else:
+        base_query += " ORDER BY id"
 
-    # Execute the query with limit
-    cursor = db.execute_sql(base_query_with_limit, params_with_limit)
+    # Execute the query
+    cursor = db.execute_sql(base_query, params)
     rows = cursor.fetchall()
-
-    # If no results found within the limit, remove the limit and fetch all matching rows
-    if not rows:
-        cursor = db.execute_sql(base_query + " ORDER BY id", params)
-        rows = cursor.fetchall()
 
     columns = [column[0] for column in cursor.description]
 
     # Convert the result to a list of dictionaries
-    results = [dict(zip(columns, row)) for row in rows]
+    results = []
+    for row in rows:
+        row_dict = dict(zip(columns, row))
+        results.append(row_dict)
 
     return {"data": results}
 
@@ -973,6 +1094,12 @@ def format_duration(seconds):
 
 @app.post("/api/charger_analytics")
 async def charger_analytics(request: ChargerAnalyticsRequest):
+
+    charger_serialnum = await central_system.getChargerSerialNum(request.charger_id)
+    
+    # Form the complete charge_point_id
+    charger_id = f"{request.charger_id}/{charger_serialnum}"
+
     # Initialize variables to store the results
     start_time = request.start_time or datetime.min.replace(hour=0, minute=0, second=0, microsecond=0)
     end_time = request.end_time or datetime.max.replace(hour=23, minute=59, second=59, microsecond=0)
@@ -984,7 +1111,7 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
 
     if request.charger_id:
         where_clauses.append("charger_id = %s")
-        params.append(request.charger_id)
+        params.append(charger_id)
 
     where_clause = " AND ".join(where_clauses)
 
@@ -1099,7 +1226,7 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
 
     # If a specific charger ID is requested, return data only for that charger
     if request.charger_id:
-        return analytics.get(request.charger_id, {"error": "Charger ID not found."})
+        return analytics.get(charger_id, {"error": "Charger ID not found."})
     
     return {"analytics": analytics}
 
