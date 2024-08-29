@@ -1,4 +1,4 @@
-from peewee import Model, AutoField, CharField, DateTimeField, IntegerField, FloatField, UUIDField
+from peewee import Model, AutoField, CharField, DateTimeField, IntegerField, FloatField, UUIDField, TextField
 import uuid
 from dbconn import get_database
 
@@ -8,11 +8,22 @@ db = get_database()
 def getUUID():
     return str(uuid.uuid4())
 
-print (getUUID())
-
 class BaseModel(Model):
     class Meta:
         database = db
+
+class Logs(Model):
+    id = AutoField()
+    uuid = UUIDField(default=uuid.uuid4, unique=True)
+    log_message = CharField()
+    log_level = CharField()  # e.g., INFO, ERROR, DEBUG
+    timestamp = DateTimeField()
+    file_origin = CharField()  # File which originated the log
+    error_details = TextField(null=True)  # Store error details if any
+
+    class Meta:
+        database = db
+        table_name = 'logs'
 
 class Transaction(BaseModel):
 
@@ -99,4 +110,4 @@ class Analytics(BaseModel):
 
 # Create the tables
 db.connect()
-db.create_tables([Transaction, Reservation, OCPPMessageCMS, OCPPMessageCharger, QRCodeData, Analytics], safe=True)
+db.create_tables([Transaction, Reservation, OCPPMessageCMS, OCPPMessageCharger, QRCodeData, Analytics, Logs], safe=True)

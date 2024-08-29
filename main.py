@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from typing import Optional, Dict
 from peewee import DoesNotExist
 from io import BytesIO
+import signal
 import qrcode
 import requests
 import json
@@ -16,9 +17,9 @@ import os
 from OCPP_Requests import ChargePoint  # Assuming this is where ChargePoint is implemented
 from models import Reservation, QRCodeData, db, Analytics
 from Chargers_to_CMS_Parser import parse_and_store_cancel_reservation_response  # Assuming this handles responses
+from loggingHandler import setup_logging
 
-
-logging.basicConfig(level=logging.DEBUG)
+setup_logging()
 
 API_KEY_NAME = "x-api-key"
         

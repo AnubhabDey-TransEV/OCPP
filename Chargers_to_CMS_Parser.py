@@ -5,10 +5,6 @@ import json
 import uuid
 from dbconn import get_database  # Import the get_database function to get the database connection
 
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
-
-# Get the database connection
 db = get_database()
 
 def get_existing_columns():

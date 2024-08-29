@@ -8,8 +8,6 @@ import Chargers_to_CMS_Parser as parser_c2c
 import CMS_to_Charger_Parser as parser_ctc
 from models import Transaction
 
-logging.basicConfig(level=logging.DEBUG)
-
 class ChargePoint(CP):
     def __init__(self, id, websocket):
         super().__init__(id, websocket)

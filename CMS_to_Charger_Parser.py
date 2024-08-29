@@ -5,9 +5,6 @@ import uuid
 import json
 from dbconn import get_database
 
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
-
 # Get the database connection
 db = get_database()
 
