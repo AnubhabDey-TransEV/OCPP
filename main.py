@@ -8,8 +8,8 @@ from pydantic import BaseModel
 from typing import Optional, Dict
 from peewee import DoesNotExist
 from io import BytesIO
-import signal
 import qrcode
+import uvicorn
 import requests
 import json
 from decouple import config
@@ -22,7 +22,7 @@ from loggingHandler import setup_logging
 setup_logging()
 
 API_KEY_NAME = "x-api-key"
-        
+
 app = FastAPI()
 
 app.add_middleware(
@@ -1233,6 +1233,5 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
 
 
 if __name__ == "__main__":
-    import uvicorn
     port=int(config("F_SERVER_PORT"))
     uvicorn.run(app, host=config("F_SERVER_HOST"), port=port)
