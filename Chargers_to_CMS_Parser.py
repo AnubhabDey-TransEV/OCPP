@@ -194,6 +194,10 @@ def parse_and_store_get_configuration_response(charger_id, configuration_key):
     message_type = "ConfigurationResponse"
     store_ocpp_message(charger_id, message_type, "Response", configuration_key=configuration_key)
 
+def parse_and_store_authorize(charger_id, **kwargs):
+    message_type = "Authorize"
+    store_ocpp_message(charger_id, message_type, "Request", **kwargs)
+
 def parse_and_store_acknowledgment(charger_id, message_type, original_message_type, original_message_time, **kwargs):
     store_ocpp_message(charger_id, message_type, "Acknowledgment", original_message_type=original_message_type, original_message_time=original_message_time, **kwargs)
 

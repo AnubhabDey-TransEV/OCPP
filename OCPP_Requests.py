@@ -76,6 +76,40 @@ class ChargePoint(CP):
             self.update_connector_state(connector_id, transaction_id=transaction_id)
 
     # Inbound messages from chargers to CMS
+
+    @on('Authorize')
+    async def on_authorize(self, **kwargs):
+        logging.debug(f"Received Authorize request with kwargs: {kwargs}")
+        
+        # Extract the idTag from the incoming request
+        id_tag = kwargs.get('id_tag')
+        
+        # Simulate validation of the idTag (you should replace this with actual validation logic)
+        is_authorized = await self.validate_id_tag(id_tag)
+        
+        # Determine the status based on the validation result
+        status = 'Accepted' if is_authorized else 'Invalid'
+        
+        # Log the authorization attempt
+        parser_c2c.parse_and_store_authorize(self.charger_id, id_tag=id_tag, status=status)
+        
+        # Create the response based on the authorization result
+        response = call_result.Authorize(
+            id_tag_info={'status': status}
+        )
+        
+        # Store the acknowledgment in the CMS to Charger logs
+        parser_ctc.parse_and_store_acknowledgment(
+            self.charger_id, 
+            "Authorize", 
+            "Authorize", 
+            self.currdatetime(), 
+            status=status
+        )
+        
+        # Return the response back to the Charge Point
+        return response
+
     @on('BootNotification')
     async def on_boot_notification(self, **kwargs):
         logging.debug(f"Received BootNotification with kwargs: {kwargs}")
@@ -106,6 +140,7 @@ class ChargePoint(CP):
         self.mark_as_online()
         transaction_id = kwargs.get('transaction_id')
         connector_id = kwargs.get('connector_id')
+        id_tag = kwargs.get('id_tag')
         meter_start = kwargs.get('meter_start')
         parser_c2c.parse_and_store_start_transaction(self.charger_id, **kwargs)
 
@@ -114,7 +149,8 @@ class ChargePoint(CP):
             charger_id=self.charger_id,
             connector_id=connector_id,
             meter_start=meter_start,
-            start_time=datetime.now()
+            start_time=datetime.now(),
+            id_tag=id_tag,
         )
         self.update_transaction_id(connector_id, transaction_id)
         # Store the transaction record ID in the connector state if needed

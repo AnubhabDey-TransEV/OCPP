@@ -11,8 +11,8 @@ class DatabaseLogHandler(logging.Handler):
 
         # Convert the log entry to string and check if it contains the word "heartbeat"
         log_entry = self.format(record)
-        if "heartbeat" in log_entry.lower():  # Case-insensitive check
-            return  # Skip logging if "heartbeat" is found
+        # if "heartbeat" in log_entry.lower():  # Case-insensitive check
+        #     return  # Skip logging if "heartbeat" is found
 
         try:
             # Convert the timestamp to IST (UTC+5:30)

@@ -15,7 +15,7 @@ class BaseModel(Model):
 class Logs(Model):
     id = AutoField()
     uuid = UUIDField(default=uuid.uuid4, unique=True)
-    log_message = CharField()
+    log_message = TextField()
     log_level = CharField()  # e.g., INFO, ERROR, DEBUG
     timestamp = DateTimeField()
     file_origin = CharField()  # File which originated the log
@@ -35,6 +35,7 @@ class Transaction(BaseModel):
     total_consumption = FloatField()  # You can manually compute this in your code
     start_time = DateTimeField()
     stop_time = DateTimeField()
+    id_tag = CharField()
 
     class Meta:
         table_name = 'transactions'
