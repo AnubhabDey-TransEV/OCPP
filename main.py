@@ -18,8 +18,12 @@ from OCPP_Requests import ChargePoint  # Assuming this is where ChargePoint is i
 from models import Reservation, QRCodeData, db, Analytics
 from Chargers_to_CMS_Parser import parse_and_store_cancel_reservation_response  # Assuming this handles responses
 from loggingHandler import setup_logging
+from cachetools import TTLCache, cached
+import time
 
 setup_logging()
+
+charger_data_cache = TTLCache(maxsize=1, ttl=7200)  # Cache for 2 hours
 
 API_KEY_NAME = "x-api-key"
 
@@ -118,18 +122,45 @@ class CentralSystem:
         except Exception as e:
             logging.error(f"Exception while sending HeartbeatInterval change: {e}")
 
+
+    async def get_charger_data(self):
+        """
+        Fetch the entire charger data from the API or use the cache if available.
+        If not in cache, fetch fresh data from the API.
+        """
+        if "charger_data" in charger_data_cache:
+            logging.info("Using cached charger data.")
+            return charger_data_cache["charger_data"]
+        else:
+            logging.info("Cache not found or expired, fetching fresh charger data from API.")
+            first_api_url = config("APICHARGERDATA")
+            apiauthkey = config("APIAUTHKEY")
+            timeout = 120
+
+            # Fetch charger data from the API
+            response = requests.get(first_api_url, headers={"apiauthkey": apiauthkey}, timeout=timeout)
+            
+            if response.status_code != 200:
+                logging.error("Error fetching charger data from API")
+                raise HTTPException(status_code=500, detail="Error fetching charger data from API")
+
+            charger_data = response.json().get("data", [])
+            
+            # Cache the entire charger data for future use
+            charger_data_cache["charger_data"] = charger_data
+            return charger_data
+
     async def verify_charger_id(self, charge_point_id: str) -> bool:
+        """
+        Verify if the charger ID exists in the system by checking cached data first,
+        then the API if necessary.
+        """
         uid, charger_serialnum = charge_point_id.split("/")
-        first_api_url = config("APICHARGERDATA")
-        apiauthkey = config("APIAUTHKEY")
-        timeout=120
-        response = requests.get(first_api_url, headers={"apiauthkey": apiauthkey}, timeout=timeout)
-        
-        if response.status_code != 200:
-            logging.error("Error fetching charger data from API")
-            return False
-        
-        charger_data = response.json().get("data", [])
+
+        # Get the charger data (either from cache or API)
+        charger_data = await self.get_charger_data()
+
+        # Check if the charger exists in the cached data
         charger = next((item for item in charger_data if item["uid"] == uid and item["Chargerserialnum"] == charger_serialnum), None)
         
         if not charger:
@@ -137,18 +168,15 @@ class CentralSystem:
             return False
         
         return True
-    
+
     async def getChargerSerialNum(self, uid: str) -> str:
-        first_api_url = config("APICHARGERDATA")
-        apiauthkey = config("APIAUTHKEY")
-        timeout = 120
-        response = requests.get(first_api_url, headers={"apiauthkey": apiauthkey}, timeout=timeout)
-        
-        if response.status_code != 200:
-            logging.error("Error fetching charger data from API")
-            raise HTTPException(status_code=500, detail="Error fetching charger data from API")
-        
-        charger_data = response.json().get("data", [])
+        """
+        Get the Chargerserialnum by first checking cached data, and then the API if necessary.
+        """
+        # Get the charger data (either from cache or API)
+        charger_data = await self.get_charger_data()
+
+        # Find the charger in the cached data
         charger = next((item for item in charger_data if item["uid"] == uid), None)
         
         if not charger:
@@ -156,7 +184,6 @@ class CentralSystem:
             raise HTTPException(status_code=404, detail="Charger not found")
         
         return charger["Chargerserialnum"]
-
 
     async def send_request(self, charge_point_id, request_method, *args, **kwargs):
         charge_point = self.charge_points.get(charge_point_id)
@@ -495,12 +522,16 @@ async def get_configuration(request: GetConfigurationRequest):
 @app.post("/api/status")
 async def get_charge_point_status(request: StatusRequest):
 
-    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-    
-    # Form the complete charge_point_id
-    charge_point_id = f"{request.uid}/{charger_serialnum}"
+    if request.uid != "all_online":
 
-    charge_point_id = charge_point_id
+        charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+        
+        # Form the complete charge_point_id
+        charge_point_id = f"{request.uid}/{charger_serialnum}"
+    
+    else:
+        if(request.uid=="all_online"):
+            charge_point_id=request.uid
     
     if charge_point_id == "all_online":
         all_online_statuses = {}
