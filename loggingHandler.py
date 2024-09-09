@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timedelta, timezone
-from peewee import IntegrityError, fn
+from peewee import IntegrityError
 from models import Logs, db
 
 class DatabaseLogHandler(logging.Handler):
@@ -9,10 +9,14 @@ class DatabaseLogHandler(logging.Handler):
         if record.name in ('peewee', 'database_logger'):
             return
 
-        # Convert the log entry to string and check if it contains the word "heartbeat"
+        # Convert the log entry to string
         log_entry = self.format(record)
-        # if "heartbeat" in log_entry.lower():  # Case-insensitive check
-        #     return  # Skip logging if "heartbeat" is found
+        error_details = None  # Initialize error_details
+
+        # Check if the log message contains the word "error"
+        if "error" in log_entry.lower():
+            # Extract everything after "error" (case-insensitive)
+            error_details = log_entry.lower().split("error", 1)[-1].strip()
 
         try:
             # Convert the timestamp to IST (UTC+5:30)
@@ -25,7 +29,6 @@ class DatabaseLogHandler(logging.Handler):
                 # Prepare the log entry details
                 log_level = record.levelname
                 file_origin = record.pathname.split("/")[-1] if "/" in record.pathname else record.pathname.split("\\")[-1]
-                error_details = record.exc_text if record.exc_info else None
 
                 # Insert the new log into the database with IST timestamp
                 Logs.create(
@@ -33,7 +36,7 @@ class DatabaseLogHandler(logging.Handler):
                     log_level=log_level,
                     timestamp=ist_timestamp,  # Store in IST
                     file_origin=file_origin,
-                    error_details=error_details
+                    error_details=error_details  # Save error details (if any)
                 )
 
                 # Calculate the date one year ago in IST

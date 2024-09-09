@@ -155,13 +155,13 @@ class CentralSystem:
         Verify if the charger ID exists in the system by checking cached data first,
         then the API if necessary.
         """
-        uid, charger_serialnum = charge_point_id.split("/")
+        uid = charge_point_id
 
         # Get the charger data (either from cache or API)
         charger_data = await self.get_charger_data()
 
         # Check if the charger exists in the cached data
-        charger = next((item for item in charger_data if item["uid"] == uid and item["Chargerserialnum"] == charger_serialnum), None)
+        charger = next((item for item in charger_data if item["uid"] == uid), None)
         
         if not charger:
             logging.error(f"Charger with ID {charge_point_id} not found in the system.")
@@ -169,21 +169,21 @@ class CentralSystem:
         
         return True
 
-    async def getChargerSerialNum(self, uid: str) -> str:
-        """
-        Get the Chargerserialnum by first checking cached data, and then the API if necessary.
-        """
-        # Get the charger data (either from cache or API)
-        charger_data = await self.get_charger_data()
+    # async def getChargerSerialNum(self, uid: str) -> str:
+    #     """
+    #     Get the Chargerserialnum by first checking cached data, and then the API if necessary.
+    #     """
+    #     # Get the charger data (either from cache or API)
+    #     charger_data = await self.get_charger_data()
 
-        # Find the charger in the cached data
-        charger = next((item for item in charger_data if item["uid"] == uid), None)
+    #     # Find the charger in the cached data
+    #     charger = next((item for item in charger_data if item["uid"] == uid), None)
         
-        if not charger:
-            logging.error(f"Charger with UID {uid} not found in the system.")
-            raise HTTPException(status_code=404, detail="Charger not found")
+    #     if not charger:
+    #         logging.error(f"Charger with UID {uid} not found in the system.")
+    #         raise HTTPException(status_code=404, detail="Charger not found")
         
-        return charger["Chargerserialnum"]
+    #     return charger["Chargerserialnum"]
 
     async def send_request(self, charge_point_id, request_method, *args, **kwargs):
         charge_point = self.charge_points.get(charge_point_id)
@@ -247,8 +247,15 @@ class CentralSystem:
 central_system = CentralSystem()
 
 # WebSocket endpoint that supports charger_id with slashes
-@app.websocket("/{charger_id:path}")
-async def websocket_endpoint(websocket: WebSocket, charger_id: str):
+@app.websocket("/{charger_id}/{serialnumber:Optional[str]}")
+async def websocket_endpoint(websocket: WebSocket, charger_id: str, serialnumber: Optional[str] = None):
+    # Log the connection details
+    if serialnumber:
+        logging.info(f"Charger {charger_id} with serial number {serialnumber} is connecting.")
+    else:
+        logging.info(f"Charger {charger_id} is connecting without serial number.")
+    
+    # Now handle the connection irrespective of the presence of serialnumber
     await central_system.handle_charge_point(websocket, charger_id)
 
 # FastAPI request models
@@ -344,10 +351,10 @@ class ChargerAnalyticsRequest(BaseModel):
 @app.post("/api/change_availability")
 async def change_availability(request: ChangeAvailabilityRequest):
 
-    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
     
     # Form the complete charge_point_id
-    charge_point_id = f"{request.uid}/{charger_serialnum}"
+    charge_point_id = request.uid
 
     response = await central_system.send_request(
         charge_point_id=charge_point_id,
@@ -362,10 +369,10 @@ async def change_availability(request: ChangeAvailabilityRequest):
 @app.post("/api/start_transaction")
 async def start_transaction(request: StartTransactionRequest):
 
-    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
     
     # Form the complete charge_point_id
-    charge_point_id = f"{request.uid}/{charger_serialnum}"
+    charge_point_id = request.uid
 
     response = await central_system.send_request(
         charge_point_id=charge_point_id,
@@ -380,10 +387,10 @@ async def start_transaction(request: StartTransactionRequest):
 @app.post("/api/stop_transaction")
 async def stop_transaction(request: StopTransactionRequest):
 
-    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
     
     # Form the complete charge_point_id
-    charge_point_id = f"{request.uid}/{charger_serialnum}"
+    charge_point_id = request.uid
 
     response = await central_system.send_request(
         charge_point_id=charge_point_id,
@@ -397,10 +404,10 @@ async def stop_transaction(request: StopTransactionRequest):
 @app.post("/api/change_configuration")
 async def change_configuration(request: ChangeConfigurationRequest):
 
-    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
     
     # Form the complete charge_point_id
-    charge_point_id = f"{request.uid}/{charger_serialnum}"
+    charge_point_id = request.uid
 
     response = await central_system.send_request(
         charge_point_id=charge_point_id,
@@ -415,10 +422,10 @@ async def change_configuration(request: ChangeConfigurationRequest):
 @app.post("/api/clear_cache")
 async def clear_cache(request: GetConfigurationRequest):
 
-    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
     
     # Form the complete charge_point_id
-    charge_point_id = f"{request.uid}/{charger_serialnum}"
+    charge_point_id = request.uid
 
     response = await central_system.send_request(
         charge_point_id=charge_point_id,
@@ -431,10 +438,10 @@ async def clear_cache(request: GetConfigurationRequest):
 @app.post("/api/unlock_connector")
 async def unlock_connector(request: UnlockConnectorRequest):
 
-    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
     
     # Form the complete charge_point_id
-    charge_point_id = f"{request.uid}/{charger_serialnum}"
+    charge_point_id = request.uid
 
     response = await central_system.send_request(
         charge_point_id=charge_point_id,
@@ -448,10 +455,10 @@ async def unlock_connector(request: UnlockConnectorRequest):
 @app.post("/api/get_diagnostics")
 async def get_diagnostics(request: GetDiagnosticsRequest):
 
-    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
     
     # Form the complete charge_point_id
-    charge_point_id = f"{request.uid}/{charger_serialnum}"
+    charge_point_id = request.uid
 
     response = await central_system.send_request(
         charge_point_id=charge_point_id,
@@ -469,10 +476,10 @@ async def get_diagnostics(request: GetDiagnosticsRequest):
 @app.post("/api/update_firmware")
 async def update_firmware(request: UpdateFirmwareRequest):
 
-    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
     
     # Form the complete charge_point_id
-    charge_point_id = f"{request.uid}/{charger_serialnum}"
+    charge_point_id = request.uid
 
     response = await central_system.send_request(
         charge_point_id=charge_point_id,
@@ -489,10 +496,10 @@ async def update_firmware(request: UpdateFirmwareRequest):
 @app.post("/api/reset")
 async def reset(request: ResetRequest):
 
-    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
     
     # Form the complete charge_point_id
-    charge_point_id = f"{request.uid}/{charger_serialnum}"
+    charge_point_id = request.uid
 
     response = await central_system.send_request(
         charge_point_id=charge_point_id,
@@ -506,10 +513,10 @@ async def reset(request: ResetRequest):
 @app.post("/api/get_configuration")
 async def get_configuration(request: GetConfigurationRequest):
 
-    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
     
     # Form the complete charge_point_id
-    charge_point_id = f"{request.uid}/{charger_serialnum}"
+    charge_point_id = request.uid
 
     response = await central_system.send_request(
         charge_point_id=charge_point_id,
@@ -521,22 +528,30 @@ async def get_configuration(request: GetConfigurationRequest):
 
 @app.post("/api/status")
 async def get_charge_point_status(request: StatusRequest):
+    
+    # Fetch the latest charger data from cache or API
+    charger_data = await central_system.get_charger_data()
+    
+    # Create a set of active charger IDs from the charger data (API/cache)
+    active_chargers = {f"{item['uid']}" for item in charger_data}
 
-    if request.uid != "all_online":
-
-        charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-        
+    # Handle specific chargers or all_online case
+    if request.uid not in ["all", "all_online"]:
         # Form the complete charge_point_id
-        charge_point_id = f"{request.uid}/{charger_serialnum}"
+        charge_point_id = request.uid
+        
+        # Ensure the requested charger is still present in the API/cache
+        if charge_point_id not in active_chargers:
+            raise HTTPException(status_code=404, detail="Charger not found in the system")
     
     else:
-        if(request.uid=="all_online"):
-            charge_point_id=request.uid
-    
+        charge_point_id = request.uid
+
+    # Handle "all_online" case
     if charge_point_id == "all_online":
         all_online_statuses = {}
         for cp_id, charge_point in central_system.charge_points.items():
-            if charge_point.online:
+            if charge_point.online and cp_id in active_chargers:  # Only show chargers still present in the API/cache
                 online_status = "Online (with error)" if charge_point.has_error else "Online"
                 connectors = charge_point.state["connectors"]
                 connectors_status = {}
@@ -575,6 +590,75 @@ async def get_charge_point_status(request: StatusRequest):
                 }
         return all_online_statuses
 
+    # Handle "all" case - return all chargers (online and offline) present in the API/cache
+    if charge_point_id == "all":
+        all_statuses = {}
+
+        # Iterate through the charger data (from API/cache)
+        for charger in charger_data:
+            # Get the charger ID from the API/cache
+            charger_id = charger['uid']  # Use the 'uid' field from the charger data to set charger_id
+            charge_point = central_system.charge_points.get(charger_id)
+            online_status = "Offline"  # Default to offline unless active
+
+            connectors_status = {}
+
+            # If the charge point is active, use its real-time status and data
+            if charge_point:
+                online_status = "Online (with error)" if charge_point.online and charge_point.has_error else "Online"
+                connectors = charge_point.state["connectors"]
+
+                for conn_id, conn_state in connectors.items():
+                    next_reservation = Reservation.select().where(
+                        Reservation.charger_id == charger_id,
+                        Reservation.connector_id == conn_id,
+                        Reservation.status == 'Reserved'
+                    ).order_by(Reservation.expiry_date.asc()).dicts().first()
+
+                    if next_reservation:
+                        next_reservation_info = {
+                            "reservation_id": next_reservation['reservation_id'],
+                            "connector_id": next_reservation['connector_id'],
+                            "from_time": next_reservation['from_time'],
+                            "to_time": next_reservation['to_time']
+                        }
+                    else:
+                        next_reservation_info = None
+
+                    connectors_status[conn_id] = {
+                        "status": conn_state["status"],
+                        "last_meter_value": conn_state.get("last_meter_value"),
+                        "last_transaction_consumption_kwh": conn_state.get("last_transaction_consumption_kwh", 0),
+                        "error_code": conn_state.get("error_code", "NoError"),
+                        "transaction_id": conn_state.get("transaction_id"),
+                        "next_reservation": next_reservation_info
+                    }
+
+            # If the charger is offline, use its last known data from charge_points
+            elif charger_id in central_system.charge_points:
+                charge_point = central_system.charge_points[charger_id]
+                online_status = "Offline"
+                connectors = charge_point.state["connectors"]
+
+                for conn_id, conn_state in connectors.items():
+                    connectors_status[conn_id] = {
+                        "status": conn_state["status"],
+                        "last_meter_value": conn_state.get("last_meter_value"),
+                        "last_transaction_consumption_kwh": conn_state.get("last_transaction_consumption_kwh", 0),
+                        "error_code": conn_state.get("error_code", "NoError"),
+                        "transaction_id": conn_state.get("transaction_id"),
+                    }
+
+            all_statuses[charger_id] = {
+                "status": charge_point.state["status"] if charge_point else "Offline",
+                "connectors": connectors_status,
+                "online": online_status,
+                "last_message_received_time": charge_point.last_message_time.isoformat() if charge_point else None
+            }
+
+        return all_statuses
+
+    # Handle specific charge point status request (for specific chargers)
     if charge_point_id:
         charge_point = central_system.charge_points.get(charge_point_id)
         if not charge_point:
@@ -617,54 +701,59 @@ async def get_charge_point_status(request: StatusRequest):
             "online": online_status,
             "latest_message_received_time": charge_point.last_message_time.isoformat()
         }
-    else:
-        all_statuses = {}
-        for cp_id, charge_point in central_system.charge_points.items():
-            online_status = "Online (with error)" if charge_point.online and charge_point.has_error else "Online" if charge_point.online else "Offline"
-            connectors = charge_point.state["connectors"]
-            connectors_status = {}
 
-            for conn_id, conn_state in connectors.items():
-                next_reservation = Reservation.select().where(
-                    Reservation.charger_id == cp_id,
-                    Reservation.connector_id == conn_id,
-                    Reservation.status == 'Reserved'
-                ).order_by(Reservation.expiry_date.asc()).dicts().first()
 
-                if next_reservation:
-                    next_reservation_info = {
-                        "reservation_id": next_reservation['reservation_id'],
-                        "connector_id": next_reservation['connector_id'],
-                        "from_time": next_reservation['from_time'],
-                        "to_time": next_reservation['to_time']
-                    }
-                else:
-                    next_reservation_info = None
+    # Handle specific charge point status request (this block will handle only specific charge points, not "all")
+    if charge_point_id and charge_point_id != "all":
+        charge_point = central_system.charge_points.get(charge_point_id)
+        if not charge_point:
+            raise HTTPException(status_code=404, detail="Charge point not found")
 
-                connectors_status[conn_id] = {
-                    "status": conn_state["status"],
-                    "last_meter_value": conn_state.get("last_meter_value"),
-                    "last_transaction_consumption_kwh": conn_state.get("last_transaction_consumption_kwh", 0),
-                    "error_code": conn_state.get("error_code", "NoError"),
-                    "transaction_id": conn_state.get("transaction_id"),
-                    "next_reservation": next_reservation_info
+        online_status = "Online (with error)" if charge_point.online and charge_point.has_error else "Online" if charge_point.online else "Offline"
+        connectors = charge_point.state["connectors"]
+        connectors_status = {}
+
+        for conn_id, conn_state in connectors.items():
+            next_reservation = Reservation.select().where(
+                Reservation.charger_id == charge_point_id,
+                Reservation.connector_id == conn_id,
+                Reservation.status == 'Reserved'
+            ).order_by(Reservation.expiry_date.asc()).dicts().first()
+
+            if next_reservation:
+                next_reservation_info = {
+                    "reservation_id": next_reservation['reservation_id'],
+                    "connector_id": next_reservation['connector_id'],
+                    "from_time": next_reservation['from_time'],
+                    "to_time": next_reservation['to_time']
                 }
+            else:
+                next_reservation_info = None
 
-            all_statuses[cp_id] = {
-                "status": charge_point.state["status"],
-                "connectors": connectors_status,
-                "online": online_status,
-                "last_message_received_time": charge_point.last_message_time.isoformat()
+            connectors_status[conn_id] = {
+                "status": conn_state["status"],
+                "latest_meter_value": conn_state.get("last_meter_value"),
+                "latest_transaction_consumption_kwh": conn_state.get("last_transaction_consumption_kwh", 0),
+                "error_code": conn_state.get("error_code", "NoError"),
+                "latest_transaction_id": conn_state.get("transaction_id"),
+                "next_reservation": next_reservation_info
             }
-        return all_statuses
+
+        return {
+            "charger_id": charge_point_id,
+            "status": charge_point.state["status"],
+            "connectors": connectors_status,
+            "online": online_status,
+            "latest_message_received_time": charge_point.last_message_time.isoformat()
+        }
 
 @app.post("/api/trigger_message")
 async def trigger_message(request: TriggerMessageRequest):
 
-    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
     
     # Form the complete charge_point_id
-    charge_point_id = f"{request.uid}/{charger_serialnum}"
+    charge_point_id = request.uid
 
     response = await central_system.send_request(
         charge_point_id=charge_point_id,
@@ -678,10 +767,10 @@ async def trigger_message(request: TriggerMessageRequest):
 @app.post("/api/reserve_now")
 async def reserve_now(request: ReserveNowRequest):
 
-    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
     
     # Form the complete charge_point_id
-    charge_point_id = f"{request.uid}/{charger_serialnum}"
+    charge_point_id = request.uid
 
     response = await central_system.send_request(
         charge_point_id=charge_point_id,
@@ -698,10 +787,10 @@ async def reserve_now(request: ReserveNowRequest):
 @app.post("/api/cancel_reservation")
 async def cancel_reservation(request: CancelReservationRequest):
 
-    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
     
     # Form the complete charge_point_id
-    charge_point_id = f"{request.uid}/{charger_serialnum}"
+    charge_point_id = request.uid
 
     response = await central_system.cancel_reservation(
         charge_point_id=charge_point_id,
@@ -814,10 +903,10 @@ async def query_charger_to_cms(request: ChargerToCMSQueryRequest):
     # Handle the uid filter, if provided
     if request.uid:
         # Fetch the serial number using the uid
-        charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+        # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
         
         # Form the complete charge_point_id
-        charge_point_id = f"{request.uid}/{charger_serialnum}"
+        charge_point_id = request.uid
         
         # Apply the charge_point_id filter
         base_query += " AND charger_id = %s"
@@ -893,10 +982,10 @@ async def query_cms_to_charger(request: CMSToChargerQueryRequest):
     # Handle the uid filter, if provided
     if request.uid:
         # Fetch the serial number using the uid
-        charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+        # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
         
         # Form the complete charge_point_id
-        charge_point_id = f"{request.uid}/{charger_serialnum}"
+        charge_point_id = request.uid
         
         # Apply the charge_point_id filter
         base_query += " AND charger_id = %s"
@@ -972,10 +1061,10 @@ async def query_transactions(request: ChargerToCMSQueryRequest):
     # Handle the uid filter, if provided
     if request.uid:
         # Fetch the serial number using the uid
-        charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+        # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
         
         # Form the complete charge_point_id
-        charge_point_id = f"{request.uid}/{charger_serialnum}"
+        charge_point_id = request.uid
         
         # Apply the charge_point_id filter
         base_query += " AND charger_id = %s"
@@ -1042,10 +1131,10 @@ async def query_reservations(request: ChargerToCMSQueryRequest):
     # Handle the uid filter, if provided
     if request.uid:
         # Fetch the serial number using the uid
-        charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+        # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
         
         # Form the complete charge_point_id
-        charge_point_id = f"{request.uid}/{charger_serialnum}"
+        charge_point_id = request.uid
         
         # Apply the charge_point_id filter
         base_query += " AND charger_id = %s"
@@ -1127,10 +1216,10 @@ def format_duration(seconds):
 @app.post("/api/charger_analytics")
 async def charger_analytics(request: ChargerAnalyticsRequest):
 
-    charger_serialnum = await central_system.getChargerSerialNum(request.charger_id)
+    # charger_serialnum = await central_system.getChargerSerialNum(request.charger_id)
     
     # Form the complete charge_point_id
-    charger_id = f"{request.charger_id}/{charger_serialnum}"
+    charge_point_id = request.uid
 
     # Initialize variables to store the results
     start_time = request.start_time or datetime.min.replace(hour=0, minute=0, second=0, microsecond=0)
