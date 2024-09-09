@@ -20,14 +20,19 @@ from Chargers_to_CMS_Parser import parse_and_store_cancel_reservation_response  
 from loggingHandler import setup_logging
 from cachetools import TTLCache, cached
 import time
+import valkey
 
 setup_logging()
 
-charger_data_cache = TTLCache(maxsize=1, ttl=7200)  # Cache for 2 hours
+CHARGER_DATA_KEY = "charger_data_cache"
+CACHE_EXPIRY = 7200  # Cache TTL in seconds (2 hours)  # Cache for 2 hours
 
 API_KEY_NAME = "x-api-key"
 
 app = FastAPI()
+
+valkey_uri = config("VALKEY_URI")
+valkey_client = valkey.from_url(valkey_uri)
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,6 +53,28 @@ async def verify_api_key_middleware(request: Request, call_next):
     response = await call_next(request)
     return response
 
+async def refresh_cache():
+    try:
+        charger_data = await central_system.get_charger_data()
+        valkey_client.setex(CHARGER_DATA_KEY, CACHE_EXPIRY, json.dumps(charger_data))  # serialize as JSON string
+        print("Charger data has been cached.")
+    except Exception as e:
+        print(f"Failed to refresh cache: {e}")
+
+# Startup event calling the global refresh_cache function
+@app.on_event("startup")
+async def on_startup():
+    await refresh_cache()
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    try:
+        # Assuming you have a key that holds the charger data
+        valkey_client.delete(CHARGER_DATA_KEY)  # Delete the cache key
+        print("Cache cleared on shutdown.")
+    except Exception as e:
+        print(f"Failed to clear cache on shutdown: {e}")
+
 class WebSocketAdapter:
     def __init__(self, websocket: WebSocket):
         self.websocket = websocket
@@ -66,24 +93,32 @@ class CentralSystem:
         self.charge_points = {}
         self.offline_threshold = 30  # Time in seconds without messages to consider a charger offline
         self.active_connections = {}
+        self.verification_failures = {}
 
     async def handle_charge_point(self, websocket: WebSocket, charge_point_id: str):
         await websocket.accept()
 
-        if charge_point_id in self.active_connections:
+        # Check if charge_point_id is already in Valkey (i.e., active connection)
+        if valkey_client.get(f"active_connections:{charge_point_id}") is not None:
             logging.info(f"Charge point {charge_point_id} already connected, closing new connection.")
             await websocket.close(code=1000)
             return
 
+        # Verify if the charger ID exists
         if not await self.verify_charger_id(charge_point_id):
             await websocket.close(code=1000)
             return
 
         logging.info(f"Charge point {charge_point_id} connected.")
-        self.active_connections[charge_point_id] = websocket
 
+        # Store the WebSocket connection in Valkey with the charge_point_id as the key
+        valkey_client.set(f"active_connections:{charge_point_id}", os.getpid())  # Store worker/process ID with charge_point_id
+
+        # Create a WebSocket adapter for the charge point
         ws_adapter = WebSocketAdapter(websocket)
         charge_point = ChargePoint(charge_point_id, ws_adapter)
+
+        # Store the charge point object in the local in-memory dictionary
         self.charge_points[charge_point_id] = charge_point
 
         try:
@@ -93,16 +128,23 @@ class CentralSystem:
             # Wait for a brief moment to ensure the start method has begun
             await asyncio.sleep(5)  # Adjust the sleep time as necessary
 
-            # Now send the ChangeConfiguration request
+            # Now send the ChangeConfiguration request (e.g., changing heartbeat interval)
             await self.send_heartbeat_interval_change(charge_point_id)
 
             # Await the completion of the start method
             await start_task
 
         except WebSocketDisconnect:
+            # Handle WebSocket disconnect: remove from Valkey and local memory
             logging.info(f"Charge point {charge_point_id} disconnected.")
-            self.charge_points.pop(charge_point_id, None)
-            self.active_connections.pop(charge_point_id, None)
+            valkey_client.delete(f"active_connections:{charge_point_id}")  # Remove from Valkey
+            self.charge_points.pop(charge_point_id, None)  # Remove from local memory
+
+        except Exception as e:
+            logging.error(f"Error occurred while handling charge point {charge_point_id}: {e}")
+            valkey_client.delete(f"active_connections:{charge_point_id}")  # Remove from Valkey in case of an error
+            self.charge_points.pop(charge_point_id, None)  # Remove from local memory
+            await websocket.close()
 
     async def send_heartbeat_interval_change(self, charge_point_id: str):
         try:
@@ -125,48 +167,74 @@ class CentralSystem:
 
     async def get_charger_data(self):
         """
-        Fetch the entire charger data from the API or use the cache if available.
-        If not in cache, fetch fresh data from the API.
+        Fetch the entire charger data from Valkey cache or API if the cache is not available or expired.
         """
-        if "charger_data" in charger_data_cache:
-            logging.info("Using cached charger data.")
-            return charger_data_cache["charger_data"]
-        else:
-            logging.info("Cache not found or expired, fetching fresh charger data from API.")
-            first_api_url = config("APICHARGERDATA")
-            apiauthkey = config("APIAUTHKEY")
-            timeout = 120
+        # Try to get cached charger data from Valkey
+        cached_data = valkey_client.get(CHARGER_DATA_KEY)
+        
+        if cached_data:
+            logging.info("Using cached charger data from Valkey.")
+            # Deserialize the JSON string back into a Python object (list)
+            return json.loads(cached_data.decode('utf-8'))
 
-            # Fetch charger data from the API
-            response = requests.get(first_api_url, headers={"apiauthkey": apiauthkey}, timeout=timeout)
-            
-            if response.status_code != 200:
-                logging.error("Error fetching charger data from API")
-                raise HTTPException(status_code=500, detail="Error fetching charger data from API")
+        logging.info("Cache not found or expired, fetching fresh charger data from API.")
+        # Fetch fresh charger data from API
+        charger_data = await self.fetch_charger_data_from_api()
 
-            charger_data = response.json().get("data", [])
-            
-            # Cache the entire charger data for future use
-            charger_data_cache["charger_data"] = charger_data
-            return charger_data
+        # Serialize the charger data (list) into a JSON string before storing it in Valkey
+        charger_data_json = json.dumps(charger_data)
 
+        # Store the data in Valkey with expiration time of 2 hours (7200 seconds)
+        valkey_client.setex(CHARGER_DATA_KEY, CACHE_EXPIRY, charger_data_json)
+
+        return charger_data
+    
+    async def fetch_charger_data_from_api(self):
+        """
+        Make an API request to get the charger data from the source.
+        """
+        first_api_url = config("APICHARGERDATA")
+        apiauthkey = config("APIAUTHKEY")
+        timeout = 120
+        
+        response = requests.get(first_api_url, headers={"apiauthkey": apiauthkey}, timeout=timeout)
+        
+        if response.status_code != 200:
+            logging.error("Error fetching charger data from API")
+            raise HTTPException(status_code=500, detail="Error fetching charger data from API")
+        
+        charger_data = response.json().get("data", [])
+        return charger_data
+    
+    
     async def verify_charger_id(self, charge_point_id: str) -> bool:
         """
-        Verify if the charger ID exists in the system by checking cached data first,
-        then the API if necessary.
+        Verify if the charger ID exists in the system by checking cached data first, then the API if necessary.
+        If verification fails 3 times, force an update of the cached data.
         """
-        uid = charge_point_id
-
         # Get the charger data (either from cache or API)
         charger_data = await self.get_charger_data()
-
+        
         # Check if the charger exists in the cached data
-        charger = next((item for item in charger_data if item["uid"] == uid), None)
-        
+        charger = next((item for item in charger_data if item["uid"] == charge_point_id), None)
+
         if not charger:
-            logging.error(f"Charger with ID {charge_point_id} not found in the system.")
+            # Track verification failures
+            if charge_point_id not in self.verification_failures:
+                self.verification_failures[charge_point_id] = 0
+            self.verification_failures[charge_point_id] += 1
+            
+            logging.error(f"Charger with ID {charge_point_id} not found in the system. Verification failed.")
+
+            # If verification fails 3 times, force cache update
+            if self.verification_failures[charge_point_id] >= 3:
+                logging.info(f"Verification failed 3 times for {charge_point_id}, forcing cache update.")
+                charger_data = await self.fetch_charger_data_from_api()
+                valkey_client.setex(CHARGER_DATA_KEY, CACHE_EXPIRY, json.dumps(charger_data))
+                self.verification_failures[charge_point_id] = 0  # Reset the failure count
+
             return False
-        
+
         return True
 
     # async def getChargerSerialNum(self, uid: str) -> str:
@@ -247,15 +315,16 @@ class CentralSystem:
 central_system = CentralSystem()
 
 # WebSocket endpoint that supports charger_id with slashes
-@app.websocket("/{charger_id}/{serialnumber:Optional[str]}")
-async def websocket_endpoint(websocket: WebSocket, charger_id: str, serialnumber: Optional[str] = None):
-    # Log the connection details
-    if serialnumber:
-        logging.info(f"Charger {charger_id} with serial number {serialnumber} is connecting.")
-    else:
-        logging.info(f"Charger {charger_id} is connecting without serial number.")
-    
-    # Now handle the connection irrespective of the presence of serialnumber
+# WebSocket route for connections with both charger_id and serialnumber
+@app.websocket("/{charger_id}/{serialnumber}")
+async def websocket_with_serialnumber(websocket: WebSocket, charger_id: str, serialnumber: str):
+    logging.info(f"Charger {charger_id} with serial number {serialnumber} is connecting.")
+    await central_system.handle_charge_point(websocket, charger_id)
+
+# WebSocket route for connections with only charger_id
+@app.websocket("/{charger_id}")
+async def websocket_without_serialnumber(websocket: WebSocket, charger_id: str):
+    logging.info(f"Charger {charger_id} is connecting without serial number.")
     await central_system.handle_charge_point(websocket, charger_id)
 
 # FastAPI request models
@@ -1352,6 +1421,6 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
     return {"analytics": analytics}
 
 
-if __name__ == "__main__":
-    port=int(config("F_SERVER_PORT"))
-    uvicorn.run(app, host=config("F_SERVER_HOST"), port=port)
+# if __name__ == "__main__":
+#     port=int(config("F_SERVER_PORT"))
+#     uvicorn.run(app, host=config("F_SERVER_HOST"), port=port)
