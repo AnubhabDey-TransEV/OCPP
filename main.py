@@ -132,6 +132,8 @@ class CentralSystem:
             # Now send the ChangeConfiguration request (e.g., changing heartbeat interval)
             await self.send_heartbeat_interval_change(charge_point_id)
 
+            await self.send_sampled_metervalues_interval_change(charge_point_id)
+
             # Await the completion of the start method
             await start_task
 
@@ -164,6 +166,24 @@ class CentralSystem:
 
         except Exception as e:
             logging.error(f"Exception while sending HeartbeatInterval change: {e}")
+
+    async def send_sampled_metervalues_interval_change(self, charge_point_id: str):
+        try:
+            logging.info(f"Sending SampledMeterValueInterval change to {charge_point_id}")
+            response = await self.send_request(
+                charge_point_id=charge_point_id,
+                request_method='change_configuration',
+                key='MeterValueSampleInterval',
+                value='10'
+            )
+
+            if response.status == 'Accepted':
+                logging.info(f"Successfully set MeterValueSampleInterval to 10 seconds for charger {charge_point_id}")
+            else:
+                logging.error(f"Failed to set MeterValueSampleInterval for charger {charge_point_id}: {response}")
+
+        except Exception as e:
+            logging.error(f"Exception while sending MeterValueSampleInterval change: {e}")
 
 
     async def get_charger_data(self):
