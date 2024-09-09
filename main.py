@@ -413,7 +413,7 @@ class CMSToChargerQueryRequest(BaseModel):
 class ChargerAnalyticsRequest(BaseModel):
     start_time: Optional[datetime] = None  # Optional start time for the analytics period
     end_time: Optional[datetime] = None  # Optional end time for the analytics period
-    uid: Optional[str] = None  # Optional filter by charger_id
+    charger_id: Optional[str] = None  # Optional filter by charger_id
     include_charger_ids: Optional[bool] = False  # Whether to include the list of unique charger IDs
 
 # REST API endpoints
