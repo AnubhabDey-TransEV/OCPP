@@ -1288,7 +1288,7 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
     # charger_serialnum = await central_system.getChargerSerialNum(request.charger_id)
     
     # Form the complete charge_point_id
-    charge_point_id = request.uid
+    # charge_point_id = request.uid
 
     # Initialize variables to store the results
     start_time = request.start_time or datetime.min.replace(hour=0, minute=0, second=0, microsecond=0)
