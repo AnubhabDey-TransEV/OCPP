@@ -10,6 +10,7 @@ from peewee import DoesNotExist
 from io import BytesIO
 import qrcode
 import uvicorn
+import uvloop
 import requests
 import json
 from decouple import config
@@ -391,9 +392,9 @@ class GetConfigurationRequest(BaseModel):
 class StatusRequest(BaseModel):
     uid: str
 
-class MakeQRCodes(BaseModel):
-    uid:str
-    Delete: Optional[bool] = None
+# class MakeQRCodes(BaseModel):
+#     uid:str
+#     Delete: Optional[bool] = None
 
 class ChargerToCMSQueryRequest(BaseModel):
     uid: Optional[str] = None  # Optional UID for filtering by charge_point_id
@@ -869,99 +870,98 @@ async def cancel_reservation(request: CancelReservationRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
-@app.post("/api/make_qr_code/")
-async def make_qr_code(request: MakeQRCodes):
-    # Load the API key from the .env file
-    apiauthkey = config("APIAUTHKEY")
+# @app.post("/api/make_qr_code/")
+# async def make_qr_code(request: MakeQRCodes):
+#     # Load the API key from the .env file
+#     apiauthkey = config("APIAUTHKEY")
 
-    # Extract uid and ChargerSerialNum from charge_point_id
-    charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-    uid=request.uid
+#     # Extract uid and ChargerSerialNum from charge_point_id
+#     # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
+#     uid=request.uid
     
-    # Get the QR code directory path from the environment variable
-    qr_path = config("QRPATH")
-    if not os.path.exists(qr_path):
-        os.makedirs(qr_path)
+#     # Get the QR code directory path from the environment variable
+#     qr_path = config("QRPATH")
+#     if not os.path.exists(qr_path):
+#         os.makedirs(qr_path)
 
-    try:
-        # Check if the QR code already exists in the database for both charger_id and charger_serial_number
-        qr_data = QRCodeData.get(
-            (QRCodeData.charger_id == uid) & 
-            (QRCodeData.charger_serial_number == charger_serialnum)
-        )
+#     try:
+#         # Check if the QR code already exists in the database for both charger_id and charger_serial_number
+#         qr_data = QRCodeData.get(
+#             (QRCodeData.charger_id == uid)
+#         )
         
-        if request.Delete:
-            # If Delete is True, delete the existing QR code file and its record
-            if os.path.exists(qr_data.image_path):
-                os.remove(qr_data.image_path)
-            qr_data.delete_instance()
-            return {"message": f"QR code for charger {uid} and serial number {charger_serialnum} has been deleted."}
-        else:
-            # If Delete is False, return the existing QR code from the file system
-            img_io = BytesIO()
-            with open(qr_data.image_path, 'rb') as f:
-                img_io.write(f.read())
-            img_io.seek(0)  # Ensure we're reading from the start
-            return StreamingResponse(img_io, media_type="image/png")
+#         if request.Delete:
+#             # If Delete is True, delete the existing QR code file and its record
+#             if os.path.exists(qr_data.image_path):
+#                 os.remove(qr_data.image_path)
+#             qr_data.delete_instance()
+#             return {"message": f"QR code for charger {uid} has been deleted."}
+#         else:
+#             # If Delete is False, return the existing QR code from the file system
+#             img_io = BytesIO()
+#             with open(qr_data.image_path, 'rb') as f:
+#                 img_io.write(f.read())
+#             img_io.seek(0)  # Ensure we're reading from the start
+#             return StreamingResponse(img_io, media_type="image/png")
     
-    except QRCodeData.DoesNotExist:
-        # If the QR code doesn't exist, and Delete is True, return a 404 error
-        if request.Delete:
-            raise HTTPException(status_code=404, detail="QR code not found, nothing to delete.")
+#     except QRCodeData.DoesNotExist:
+#         # If the QR code doesn't exist, and Delete is True, return a 404 error
+#         if request.Delete:
+#             raise HTTPException(status_code=404, detail="QR code not found, nothing to delete.")
 
-    # Proceed to generate a new QR code if it doesn't exist or if Delete is False
-    timeout = 120
+#     # Proceed to generate a new QR code if it doesn't exist or if Delete is False
+#     timeout = 120
 
-    # Step 1: Fetch data from the first API (if necessary for validation)
-    first_api_url = config("APICHARGERDATA")
-    response1 = requests.get(first_api_url, headers={"apiauthkey": apiauthkey}, timeout=timeout)
+#     # Step 1: Fetch data from the first API (if necessary for validation)
+#     first_api_url = config("APICHARGERDATA")
+#     response1 = requests.get(first_api_url, headers={"apiauthkey": apiauthkey}, timeout=timeout)
     
-    if response1.status_code != 200:
-        raise HTTPException(status_code=500, detail="Error fetching data from the first API")
+#     if response1.status_code != 200:
+#         raise HTTPException(status_code=500, detail="Error fetching data from the first API")
     
-    charger_data = response1.json().get("data", [])
+#     charger_data = response1.json().get("data", [])
     
-    # Validate the charger exists
-    charger = next((item for item in charger_data if item["uid"] == uid and item["Chargerserialnum"] == charger_serialnum), None)
+#     # Validate the charger exists
+#     charger = next((item for item in charger_data if item["uid"] == uid and item["Chargerserialnum"] == charger_serialnum), None)
     
-    if not charger:
-        raise HTTPException(status_code=404, detail="Charger not found")
+#     if not charger:
+#         raise HTTPException(status_code=404, detail="Charger not found")
 
-    # Generate the QR code containing only the uid
-    qr = qrcode.QRCode(
-        version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_H,
-        box_size=5,
-        border=2,
-    )
-    qr.add_data(uid)  # Only add the UID to the QR code
-    qr.make(fit=True)
+#     # Generate the QR code containing only the uid
+#     qr = qrcode.QRCode(
+#         version=1,
+#         error_correction=qrcode.constants.ERROR_CORRECT_H,
+#         box_size=5,
+#         border=2,
+#     )
+#     qr.add_data(uid)  # Only add the UID to the QR code
+#     qr.make(fit=True)
 
-    img = qr.make_image(fill='black', back_color='white')
+#     img = qr.make_image(fill='black', back_color='white')
 
-    # Prepare the image for saving
-    current_time = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-    image_filename = f"{uid}_{current_time}.png"  # Ensuring the file is saved as a PNG
-    image_path = os.path.join(qr_path, image_filename)
+#     # Prepare the image for saving
+#     current_time = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+#     image_filename = f"{uid}_{current_time}.png"  # Ensuring the file is saved as a PNG
+#     image_path = os.path.join(qr_path, image_filename)
     
-    # Save the image to the specified path in PNG format
-    img.save(image_path)
+#     # Save the image to the specified path in PNG format
+#     img.save(image_path)
 
-    # Store the path to the image and the filename in the database
-    qr_data = QRCodeData.create(
-        charger_id=uid,
-        charger_serial_number=charger_serialnum,
-        image_path=image_path,  # Store the path to the image
-        filename=image_filename,  # Store the filename of the image
-        generation_date=datetime.now()
-    )
+#     # Store the path to the image and the filename in the database
+#     qr_data = QRCodeData.create(
+#         charger_id=uid,
+#         charger_serial_number=charger_serialnum,
+#         image_path=image_path,  # Store the path to the image
+#         filename=image_filename,  # Store the filename of the image
+#         generation_date=datetime.now()
+#     )
 
-    # Return the QR code image as a response
-    img_io = BytesIO()
-    with open(image_path, 'rb') as f:
-        img_io.write(f.read())
-    img_io.seek(0)
-    return StreamingResponse(img_io, media_type="image/png")
+#     # Return the QR code image as a response
+#     img_io = BytesIO()
+#     with open(image_path, 'rb') as f:
+#         img_io.write(f.read())
+#     img_io.seek(0)
+#     return StreamingResponse(img_io, media_type="image/png")
 
 @app.post("/api/query_charger_to_cms")
 async def query_charger_to_cms(request: ChargerToCMSQueryRequest):
