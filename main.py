@@ -43,12 +43,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.middleware("http")
 async def verify_api_key_middleware(request: Request, call_next):
-    # Check if the request path starts with "/api/"
     if request.url.path.startswith("/api/"):
         api_key = request.headers.get("x-api-key")
         expected_api_key = config("API_KEY")
+        logging.info(f"Received API Key: {api_key}, Expected API Key: {expected_api_key}")
         if api_key != expected_api_key:
             raise HTTPException(status_code=403, detail="Invalid API key")
     response = await call_next(request)
@@ -99,11 +98,11 @@ class CentralSystem:
     async def handle_charge_point(self, websocket: WebSocket, charge_point_id: str):
         await websocket.accept()
 
-        # Check if charge_point_id is already in Valkey (i.e., active connection)
-        if valkey_client.get(f"active_connections:{charge_point_id}") is not None:
-            logging.info(f"Charge point {charge_point_id} already connected, closing new connection.")
-            await websocket.close(code=1000)
-            return
+        # # Check if charge_point_id is already in Valkey (i.e., active connection)
+        # if valkey_client.get(f"active_connections:{charge_point_id}") is not None:
+        #     logging.info(f"Charge point {charge_point_id} already connected, closing new connection.")
+        #     await websocket.close(code=1000)
+        #     return
 
         # Verify if the charger ID exists
         if not await self.verify_charger_id(charge_point_id):
