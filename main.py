@@ -2,15 +2,16 @@ import asyncio
 import logging
 from datetime import datetime, timezone as dt_timezone
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Header, Depends, Request, Query
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse, JSONResponse, Response
 from pydantic import BaseModel
 from typing import Optional, Dict
 from peewee import DoesNotExist
 from io import BytesIO
 import qrcode
 import uvicorn
-import uvloop
+# import uvloop
 import requests
 import json
 from decouple import config
@@ -22,6 +23,7 @@ from loggingHandler import setup_logging
 from cachetools import TTLCache, cached
 import time
 import valkey
+from contextlib import asynccontextmanager
 
 setup_logging()
 
@@ -32,16 +34,57 @@ API_KEY_NAME = "x-api-key"
 
 app = FastAPI()
 
+# middleware = [
+#     Middleware(
+#         CORSMiddleware,
+#         allow_origins=['http://localhost:5173', 'http://srv586896.hstgr.cloud/api/status'],
+#         allow_credentials=True,
+#         allow_methods=['POST','OPTIONS'],
+#         allow_headers=['Authorization', 'Content-Type', 'x-api-key', 'Access-Control-Allow-Origin']
+#     )
+# ]
+
+# app = FastAPI(middleware=middleware)
+
+# @app.middleware("http")
+# async def add_cors_headers(request: Request, call_next):
+#     response = await call_next(request)
+#     response.headers["Access-Control-Allow-Origin"] = "*"
+#     response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin"
+#     response.headers["Access-Control-Allow-Methods"] = "OPTIONS, POST"  # or "*"
+#     return response
+
+# origins=["*"]
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=origins,
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
+
+# ALLOWED_ORIGINS = '*'
+
+# # Middleware to handle CORS for all incoming requests
+# @app.middleware("http")
+# async def add_CORS_header(request: Request, call_next):
+#     response = await call_next(request)
+#     response.headers['Access-Control-Allow-Origin'] = ALLOWED_ORIGINS
+#     response.headers['Access-Control-Allow-Methods'] = 'POST, GET, DELETE, OPTIONS'
+#     response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, x-api-key'
+#     return response
+
+# Handle CORS preflight requests (OPTIONS method)
+# @app.options("/{rest_of_path:path}")
+# async def preflight_handler(request: Request, rest_of_path: str) -> Response:
+#     response = Response()
+#     response.headers['Access-Control-Allow-Origin'] = ["*"]
+#     response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+#     response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, x-api-key'
+#     return response
+
 valkey_uri = config("VALKEY_URI")
 valkey_client = valkey.from_url(valkey_uri)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Adjust this for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 async def verify_api_key_middleware(request: Request, call_next):
     if request.url.path.startswith("/api/"):
@@ -62,18 +105,49 @@ async def refresh_cache():
         print(f"Failed to refresh cache: {e}")
 
 # Startup event calling the global refresh_cache function
-@app.on_event("startup")
-async def on_startup():
-    await refresh_cache()
 
-@app.on_event("shutdown")
-async def on_shutdown():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup actions
     try:
-        # Assuming you have a key that holds the charger data
-        valkey_client.delete(CHARGER_DATA_KEY)  # Delete the cache key
-        print("Cache cleared on shutdown.")
+        await refresh_cache()  # Cache refresh logic at startup
+        print("Startup: Cache refreshed.")
+    except Exception as e:
+        print(f"Failed to refresh cache: {e}")
+    yield  # The app runs while it yields here
+    # Shutdown actions
+    try:
+        valkey_client.delete(CHARGER_DATA_KEY)  # Cache cleanup logic at shutdown
+        print("Shutdown: Cache cleared.")
     except Exception as e:
         print(f"Failed to clear cache on shutdown: {e}")
+
+app = FastAPI(lifespan=lifespan)
+
+middleware = [
+    Middleware(
+        CORSMiddleware,
+        allow_origins=['*'],
+        allow_credentials=True,
+        allow_methods=['*'],
+        allow_headers=['*']
+    )
+]
+
+app = FastAPI(middleware=middleware)
+
+# @app.on_event("startup")
+# async def on_startup():
+#     await refresh_cache()
+
+# @app.on_event("shutdown")
+# async def on_shutdown():
+#     try:
+#         # Assuming you have a key that holds the charger data
+#         valkey_client.delete(CHARGER_DATA_KEY)  # Delete the cache key
+#         print("Cache cleared on shutdown.")
+#     except Exception as e:
+#         print(f"Failed to clear cache on shutdown: {e}")
 
 class WebSocketAdapter:
     def __init__(self, websocket: WebSocket):
@@ -91,7 +165,7 @@ class WebSocketAdapter:
 class CentralSystem:
     def __init__(self):
         self.charge_points = {}
-        self.offline_threshold = 30  # Time in seconds without messages to consider a charger offline
+        self.offline_threshold = 60  # Time in seconds without messages to consider a charger offline
         self.active_connections = {}
         self.verification_failures = {}
 
@@ -155,7 +229,7 @@ class CentralSystem:
                 charge_point_id=charge_point_id,
                 request_method='change_configuration',
                 key='HeartbeatInterval',
-                value='10'
+                value='60'
             )
 
             if response.status == 'Accepted':
@@ -173,7 +247,7 @@ class CentralSystem:
                 charge_point_id=charge_point_id,
                 request_method='change_configuration',
                 key='MeterValueSampleInterval',
-                value='10'
+                value='90'
             )
 
             if response.status == 'Accepted':
@@ -437,12 +511,18 @@ class ChargerAnalyticsRequest(BaseModel):
 
 # REST API endpoints
 
+# Handle OPTIONS for /api/change_availability
+@app.options("/api/change_availability")
+async def options_change_availability():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
+
 @app.post("/api/change_availability")
 async def change_availability(request: ChangeAvailabilityRequest):
 
-    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-    
-    # Form the complete charge_point_id
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -455,12 +535,17 @@ async def change_availability(request: ChangeAvailabilityRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
+# Handle OPTIONS for /api/start_transaction
+@app.options("/api/start_transaction")
+async def options_start_transaction():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
 @app.post("/api/start_transaction")
 async def start_transaction(request: StartTransactionRequest):
 
-    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-    
-    # Form the complete charge_point_id
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -473,12 +558,18 @@ async def start_transaction(request: StartTransactionRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
+# Handle OPTIONS for /api/stop_transaction
+@app.options("/api/stop_transaction")
+async def options_stop_transaction():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
+
 @app.post("/api/stop_transaction")
 async def stop_transaction(request: StopTransactionRequest):
 
-    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-    
-    # Form the complete charge_point_id
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -490,12 +581,18 @@ async def stop_transaction(request: StopTransactionRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
+# Handle OPTIONS for /api/change_configuration
+@app.options("/api/change_configuration")
+async def options_change_configuration():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
+
 @app.post("/api/change_configuration")
 async def change_configuration(request: ChangeConfigurationRequest):
 
-    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-    
-    # Form the complete charge_point_id
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -508,12 +605,19 @@ async def change_configuration(request: ChangeConfigurationRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
+# Handle OPTIONS for /api/clear_cache
+@app.options("/api/clear_cache")
+async def options_clear_cache():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
+
+
 @app.post("/api/clear_cache")
 async def clear_cache(request: GetConfigurationRequest):
 
-    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-    
-    # Form the complete charge_point_id
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -524,12 +628,17 @@ async def clear_cache(request: GetConfigurationRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
+# Handle OPTIONS for /api/unlock_connector
+@app.options("/api/unlock_connector")
+async def options_unlock_connector():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
 @app.post("/api/unlock_connector")
 async def unlock_connector(request: UnlockConnectorRequest):
 
-    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-    
-    # Form the complete charge_point_id
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -541,12 +650,18 @@ async def unlock_connector(request: UnlockConnectorRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
+# Handle OPTIONS for /api/get_diagnostics
+@app.options("/api/get_diagnostics")
+async def options_get_diagnostics():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
+
 @app.post("/api/get_diagnostics")
 async def get_diagnostics(request: GetDiagnosticsRequest):
 
-    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-    
-    # Form the complete charge_point_id
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -562,12 +677,18 @@ async def get_diagnostics(request: GetDiagnosticsRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
+# Handle OPTIONS for /api/update_firmware
+@app.options("/api/update_firmware")
+async def options_update_firmware():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
+
 @app.post("/api/update_firmware")
 async def update_firmware(request: UpdateFirmwareRequest):
 
-    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-    
-    # Form the complete charge_point_id
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -581,6 +702,15 @@ async def update_firmware(request: UpdateFirmwareRequest):
     if isinstance(response, dict) and "error" in response:
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
+
+# Handle OPTIONS for /api/reset
+@app.options("/api/reset")
+async def options_reset():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
 
 @app.post("/api/reset")
 async def reset(request: ResetRequest):
@@ -599,12 +729,18 @@ async def reset(request: ResetRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
+# Handle OPTIONS for /api/get_configuration
+@app.options("/api/get_configuration")
+async def options_get_configuration():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
+
 @app.post("/api/get_configuration")
 async def get_configuration(request: GetConfigurationRequest):
 
-    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-    
-    # Form the complete charge_point_id
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -614,6 +750,15 @@ async def get_configuration(request: GetConfigurationRequest):
     if isinstance(response, dict) and "error" in response:
         raise HTTPException(status_code=404, detail=response["error"])
     return response  # Return the configuration response as JSON
+
+# Handle OPTIONS for /api/status
+@app.options("/api/status")
+async def options_status():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
 
 @app.post("/api/status")
 async def get_charge_point_status(request: StatusRequest):
@@ -836,12 +981,18 @@ async def get_charge_point_status(request: StatusRequest):
             "latest_message_received_time": charge_point.last_message_time.isoformat()
         }
 
+# Handle OPTIONS for /api/trigger_message
+@app.options("/api/trigger_message")
+async def options_trigger_message():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
+
 @app.post("/api/trigger_message")
 async def trigger_message(request: TriggerMessageRequest):
 
-    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-    
-    # Form the complete charge_point_id
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -853,12 +1004,19 @@ async def trigger_message(request: TriggerMessageRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
+# Handle OPTIONS for /api/reserve_now
+@app.options("/api/reserve_now")
+async def options_reserve_now():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
+
+
 @app.post("/api/reserve_now")
 async def reserve_now(request: ReserveNowRequest):
 
-    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-    
-    # Form the complete charge_point_id
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -873,12 +1031,18 @@ async def reserve_now(request: ReserveNowRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
+# Handle OPTIONS for /api/cancel_reservation
+@app.options("/api/cancel_reservation")
+async def options_cancel_reservation():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
+
 @app.post("/api/cancel_reservation")
 async def cancel_reservation(request: CancelReservationRequest):
 
-    # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-    
-    # Form the complete charge_point_id
     charge_point_id = request.uid
 
     response = await central_system.cancel_reservation(
@@ -982,6 +1146,16 @@ async def cancel_reservation(request: CancelReservationRequest):
 #     img_io.seek(0)
 #     return StreamingResponse(img_io, media_type="image/png")
 
+# Handle OPTIONS for /api/query_charger_to_cms
+@app.options("/api/query_charger_to_cms")
+async def options_query_charger_to_cms():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
+
+
 @app.post("/api/query_charger_to_cms")
 async def query_charger_to_cms(request: ChargerToCMSQueryRequest):
     # Initialize the base query
@@ -1060,6 +1234,15 @@ async def query_charger_to_cms(request: ChargerToCMSQueryRequest):
         results.append(row_dict)
 
     return {"data": results}
+
+# Handle OPTIONS for /api/query_cms_to_charger
+@app.options("/api/query_cms_to_charger")
+async def options_query_cms_to_charger():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
 
 @app.post("/api/query_cms_to_charger")
 async def query_cms_to_charger(request: CMSToChargerQueryRequest):
@@ -1140,6 +1323,15 @@ async def query_cms_to_charger(request: CMSToChargerQueryRequest):
 
     return {"data": results}
 
+# Handle OPTIONS for /api/query_transactions
+@app.options("/api/query_transactions")
+async def options_query_transactions():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
+
 @app.post("/api/query_transactions")
 async def query_transactions(request: ChargerToCMSQueryRequest):
     # Initialize the base query
@@ -1209,6 +1401,15 @@ async def query_transactions(request: ChargerToCMSQueryRequest):
         results.append(row_dict)
 
     return {"data": results}
+
+# Handle OPTIONS for /api/query_reservations
+@app.options("/api/query_reservations")
+async def options_query_reservations():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
+    })
 
 @app.post("/api/query_reservations")
 async def query_reservations(request: ChargerToCMSQueryRequest):
@@ -1300,6 +1501,15 @@ def format_duration(seconds):
         parts.append(f"{int(seconds)} seconds")
 
     return ", ".join(parts) if parts else "0 seconds"
+
+# Handle OPTIONS for /api/charger_analytics
+@app.options("/api/charger_analytics")
+async def options_charger_analytics():
+    return JSONResponse(content={}, status_code=200, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key",
+    })
 
 @app.post("/api/charger_analytics")
 async def charger_analytics(request: ChargerAnalyticsRequest):
@@ -1440,6 +1650,6 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
     return {"analytics": analytics}
 
 
-# if __name__ == "__main__":
-#     port=int(config("F_SERVER_PORT"))
-#     uvicorn.run(app, host=config("F_SERVER_HOST"), port=port)
+if __name__ == "__main__":
+    port=int(config("F_SERVER_PORT"))
+    uvicorn.run(app, host=config("F_SERVER_HOST"), port=port)
