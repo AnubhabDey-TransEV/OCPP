@@ -34,59 +34,11 @@ API_KEY_NAME = "x-api-key"
 
 app = FastAPI()
 
-# middleware = [
-#     Middleware(
-#         CORSMiddleware,
-#         allow_origins=['http://localhost:5173', 'http://srv586896.hstgr.cloud/api/status'],
-#         allow_credentials=True,
-#         allow_methods=['POST','OPTIONS'],
-#         allow_headers=['Authorization', 'Content-Type', 'x-api-key', 'Access-Control-Allow-Origin']
-#     )
-# ]
-
-# app = FastAPI(middleware=middleware)
-
-# @app.middleware("http")
-# async def add_cors_headers(request: Request, call_next):
-#     response = await call_next(request)
-#     response.headers["Access-Control-Allow-Origin"] = "*"
-#     response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin"
-#     response.headers["Access-Control-Allow-Methods"] = "OPTIONS, POST"  # or "*"
-#     return response
-
-# origins=["*"]
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=origins,
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
-
-# ALLOWED_ORIGINS = '*'
-
-# # Middleware to handle CORS for all incoming requests
-# @app.middleware("http")
-# async def add_CORS_header(request: Request, call_next):
-#     response = await call_next(request)
-#     response.headers['Access-Control-Allow-Origin'] = ALLOWED_ORIGINS
-#     response.headers['Access-Control-Allow-Methods'] = 'POST, GET, DELETE, OPTIONS'
-#     response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, x-api-key'
-#     return response
-
-# Handle CORS preflight requests (OPTIONS method)
-# @app.options("/{rest_of_path:path}")
-# async def preflight_handler(request: Request, rest_of_path: str) -> Response:
-#     response = Response()
-#     response.headers['Access-Control-Allow-Origin'] = ["*"]
-#     response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
-#     response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, x-api-key'
-#     return response
-
 valkey_uri = config("VALKEY_URI")
 valkey_client = valkey.from_url(valkey_uri)
 
 async def verify_api_key_middleware(request: Request, call_next):
+    
     if request.url.path.startswith("/api/"):
         api_key = request.headers.get("x-api-key")
         expected_api_key = config("API_KEY")
@@ -136,19 +88,6 @@ middleware = [
 
 app = FastAPI(middleware=middleware)
 
-# @app.on_event("startup")
-# async def on_startup():
-#     await refresh_cache()
-
-# @app.on_event("shutdown")
-# async def on_shutdown():
-#     try:
-#         # Assuming you have a key that holds the charger data
-#         valkey_client.delete(CHARGER_DATA_KEY)  # Delete the cache key
-#         print("Cache cleared on shutdown.")
-#     except Exception as e:
-#         print(f"Failed to clear cache on shutdown: {e}")
-
 class WebSocketAdapter:
     def __init__(self, websocket: WebSocket):
         self.websocket = websocket
@@ -162,21 +101,15 @@ class WebSocketAdapter:
     async def close(self):
         await self.websocket.close()
 
-class CentralSystem:
+class CentralSystem:  
     def __init__(self):
         self.charge_points = {}
-        self.offline_threshold = 60  # Time in seconds without messages to consider a charger offline
         self.active_connections = {}
         self.verification_failures = {}
+        self.frontend_connections = {}
 
     async def handle_charge_point(self, websocket: WebSocket, charge_point_id: str):
         await websocket.accept()
-
-        # # Check if charge_point_id is already in Valkey (i.e., active connection)
-        # if valkey_client.get(f"active_connections:{charge_point_id}") is not None:
-        #     logging.info(f"Charge point {charge_point_id} already connected, closing new connection.")
-        #     await websocket.close(code=1000)
-        #     return
 
         # Verify if the charger ID exists
         if not await self.verify_charger_id(charge_point_id):
@@ -194,6 +127,8 @@ class CentralSystem:
 
         # Store the charge point object in the local in-memory dictionary
         self.charge_points[charge_point_id] = charge_point
+        self.charge_points[charge_point_id].online = True
+        await self.notify_frontend(charge_point_id, online=True)
 
         try:
             # Start the charge point in a background task
@@ -214,13 +149,77 @@ class CentralSystem:
             # Handle WebSocket disconnect: remove from Valkey and local memory
             logging.info(f"Charge point {charge_point_id} disconnected.")
             valkey_client.delete(f"active_connections:{charge_point_id}")  # Remove from Valkey
-            self.charge_points.pop(charge_point_id, None)  # Remove from local memory
+            self.charge_points[charge_point_id].online = False  # Remove from local memory
+            await self.notify_frontend(charge_point_id, online=False)
 
         except Exception as e:
             logging.error(f"Error occurred while handling charge point {charge_point_id}: {e}")
             valkey_client.delete(f"active_connections:{charge_point_id}")  # Remove from Valkey in case of an error
-            self.charge_points.pop(charge_point_id, None)  # Remove from local memory
+            self.charge_points[charge_point_id].online = False
+            await self.notify_frontend(charge_point_id, online=False)
             await websocket.close()
+
+    async def handle_frontend_websocket(self, websocket: WebSocket, uid: str):
+        await websocket.accept()
+
+        # Track the frontend connection
+        if uid not in self.frontend_connections:
+            self.frontend_connections[uid] = []
+        self.frontend_connections[uid].append(websocket)
+
+        # Notify the newly connected frontend about the current status of the charger (online/offline)
+        if uid in self.charge_points and self.charge_points[uid].online:
+            # Charger is online, notify the frontend immediately
+            await self.notify_frontend(uid, online=True)
+        else:
+            # Charger is offline, notify the frontend immediately
+            await self.notify_frontend(uid, online=False)
+
+        try:
+            while True:
+                # Frontend will just be listening, no need to handle incoming messages
+                await websocket.receive_text()
+
+        except WebSocketDisconnect:
+            logging.info(f"Frontend WebSocket for charger {uid} disconnected.")
+            
+            # Safely remove the WebSocket from the frontend connections list
+            if uid in self.frontend_connections:
+                self.frontend_connections[uid].remove(websocket)
+
+                # If no other connections are active, remove the entry entirely
+                if not self.frontend_connections[uid]:
+                    del self.frontend_connections[uid]
+
+        except Exception as e:
+            logging.error(f"Error handling frontend WebSocket for charger {uid}: {e}")
+
+            # Ensure the WebSocket is properly removed in case of an error
+            if uid in self.frontend_connections and websocket in self.frontend_connections[uid]:
+                self.frontend_connections[uid].remove(websocket)
+
+                if not self.frontend_connections[uid]:
+                    del self.frontend_connections[uid]
+
+    async def notify_frontend(self, charge_point_id: str, online: bool):
+    # Notify all frontends listening for this specific charger `uid`
+        if charge_point_id in self.frontend_connections:
+            for ws in list(self.frontend_connections[charge_point_id]):
+                try:
+                    # Send the charger status update to the frontend
+                    await ws.send_json({
+                        "charger_id": charge_point_id,
+                        "status": "Online" if online else "Offline"
+                    })
+                except Exception as e:
+                    logging.error(f"Error sending WebSocket message to frontend for charger {charge_point_id}: {e}")
+                    # If sending fails, close and remove this WebSocket connection
+                    await ws.close()
+                    self.frontend_connections[charge_point_id].remove(ws)
+
+            # Clean up if no more frontend connections exist for this charger
+            if not self.frontend_connections[charge_point_id]:
+                del self.frontend_connections[charge_point_id]
 
     async def send_heartbeat_interval_change(self, charge_point_id: str):
         try:
@@ -331,22 +330,6 @@ class CentralSystem:
 
         return True
 
-    # async def getChargerSerialNum(self, uid: str) -> str:
-    #     """
-    #     Get the Chargerserialnum by first checking cached data, and then the API if necessary.
-    #     """
-    #     # Get the charger data (either from cache or API)
-    #     charger_data = await self.get_charger_data()
-
-    #     # Find the charger in the cached data
-    #     charger = next((item for item in charger_data if item["uid"] == uid), None)
-        
-    #     if not charger:
-    #         logging.error(f"Charger with UID {uid} not found in the system.")
-    #         raise HTTPException(status_code=404, detail="Charger not found")
-        
-    #     return charger["Chargerserialnum"]
-
     async def send_request(self, charge_point_id, request_method, *args, **kwargs):
         charge_point = self.charge_points.get(charge_point_id)
         if not charge_point:
@@ -397,14 +380,6 @@ class CentralSystem:
 
         return response
 
-    async def check_offline_chargers(self):
-        now = datetime.now(dt_timezone.utc)
-        offline_chargers = [cp_id for cp_id, cp in self.charge_points.items()
-                            if (now - cp.last_message_time).total_seconds() > self.offline_threshold]
-        for charge_point_id in offline_chargers:
-            self.charge_points[charge_point_id].online = False
-            logging.info(f"Charge point {charge_point_id} marked as offline due to inactivity.")
-
 # Instantiate the central system
 central_system = CentralSystem()
 
@@ -420,6 +395,17 @@ async def websocket_with_serialnumber(websocket: WebSocket, charger_id: str, ser
 async def websocket_without_serialnumber(websocket: WebSocket, charger_id: str):
     logging.info(f"Charger {charger_id} is connecting without serial number.")
     await central_system.handle_charge_point(websocket, charger_id)
+
+# WebSocket route for frontend connections
+@app.websocket("/frontend/ws/{uid}")
+async def frontend_websocket(websocket: WebSocket, uid: str):
+    try:
+        await central_system.handle_frontend_websocket(websocket, uid)
+    except WebSocketDisconnect:
+        logging.info(f"Frontend WebSocket for {uid} disconnected.")
+    except Exception as e:
+        logging.error(f"Error during WebSocket connection for {uid}: {e}")
+        await websocket.close(code=1011, reason=f"Error: {e}")
 
 # FastAPI request models
 class ChangeAvailabilityRequest(BaseModel):
@@ -484,10 +470,6 @@ class GetConfigurationRequest(BaseModel):
 
 class StatusRequest(BaseModel):
     uid: str
-
-# class MakeQRCodes(BaseModel):
-#     uid:str
-#     Delete: Optional[bool] = None
 
 class ChargerToCMSQueryRequest(BaseModel):
     uid: Optional[str] = None  # Optional UID for filtering by charge_point_id
@@ -1053,99 +1035,6 @@ async def cancel_reservation(request: CancelReservationRequest):
         raise HTTPException(status_code=404, detail=response["error"])
     return {"status": response.status}
 
-# @app.post("/api/make_qr_code/")
-# async def make_qr_code(request: MakeQRCodes):
-#     # Load the API key from the .env file
-#     apiauthkey = config("APIAUTHKEY")
-
-#     # Extract uid and ChargerSerialNum from charge_point_id
-#     # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-#     uid=request.uid
-    
-#     # Get the QR code directory path from the environment variable
-#     qr_path = config("QRPATH")
-#     if not os.path.exists(qr_path):
-#         os.makedirs(qr_path)
-
-#     try:
-#         # Check if the QR code already exists in the database for both charger_id and charger_serial_number
-#         qr_data = QRCodeData.get(
-#             (QRCodeData.charger_id == uid)
-#         )
-        
-#         if request.Delete:
-#             # If Delete is True, delete the existing QR code file and its record
-#             if os.path.exists(qr_data.image_path):
-#                 os.remove(qr_data.image_path)
-#             qr_data.delete_instance()
-#             return {"message": f"QR code for charger {uid} has been deleted."}
-#         else:
-#             # If Delete is False, return the existing QR code from the file system
-#             img_io = BytesIO()
-#             with open(qr_data.image_path, 'rb') as f:
-#                 img_io.write(f.read())
-#             img_io.seek(0)  # Ensure we're reading from the start
-#             return StreamingResponse(img_io, media_type="image/png")
-    
-#     except QRCodeData.DoesNotExist:
-#         # If the QR code doesn't exist, and Delete is True, return a 404 error
-#         if request.Delete:
-#             raise HTTPException(status_code=404, detail="QR code not found, nothing to delete.")
-
-#     # Proceed to generate a new QR code if it doesn't exist or if Delete is False
-#     timeout = 120
-
-#     # Step 1: Fetch data from the first API (if necessary for validation)
-#     first_api_url = config("APICHARGERDATA")
-#     response1 = requests.get(first_api_url, headers={"apiauthkey": apiauthkey}, timeout=timeout)
-    
-#     if response1.status_code != 200:
-#         raise HTTPException(status_code=500, detail="Error fetching data from the first API")
-    
-#     charger_data = response1.json().get("data", [])
-    
-#     # Validate the charger exists
-#     charger = next((item for item in charger_data if item["uid"] == uid and item["Chargerserialnum"] == charger_serialnum), None)
-    
-#     if not charger:
-#         raise HTTPException(status_code=404, detail="Charger not found")
-
-#     # Generate the QR code containing only the uid
-#     qr = qrcode.QRCode(
-#         version=1,
-#         error_correction=qrcode.constants.ERROR_CORRECT_H,
-#         box_size=5,
-#         border=2,
-#     )
-#     qr.add_data(uid)  # Only add the UID to the QR code
-#     qr.make(fit=True)
-
-#     img = qr.make_image(fill='black', back_color='white')
-
-#     # Prepare the image for saving
-#     current_time = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-#     image_filename = f"{uid}_{current_time}.png"  # Ensuring the file is saved as a PNG
-#     image_path = os.path.join(qr_path, image_filename)
-    
-#     # Save the image to the specified path in PNG format
-#     img.save(image_path)
-
-#     # Store the path to the image and the filename in the database
-#     qr_data = QRCodeData.create(
-#         charger_id=uid,
-#         charger_serial_number=charger_serialnum,
-#         image_path=image_path,  # Store the path to the image
-#         filename=image_filename,  # Store the filename of the image
-#         generation_date=datetime.now()
-#     )
-
-#     # Return the QR code image as a response
-#     img_io = BytesIO()
-#     with open(image_path, 'rb') as f:
-#         img_io.write(f.read())
-#     img_io.seek(0)
-#     return StreamingResponse(img_io, media_type="image/png")
-
 # Handle OPTIONS for /api/query_charger_to_cms
 @app.options("/api/query_charger_to_cms")
 async def options_query_charger_to_cms():
@@ -1154,7 +1043,6 @@ async def options_query_charger_to_cms():
         "Access-Control-Allow-Methods": "POST, OPTIONS",
         "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key, Access-Control-Allow-Origin",
     })
-
 
 @app.post("/api/query_charger_to_cms")
 async def query_charger_to_cms(request: ChargerToCMSQueryRequest):
@@ -1340,9 +1228,6 @@ async def query_transactions(request: ChargerToCMSQueryRequest):
 
     # Handle the uid filter, if provided
     if request.uid:
-        # Fetch the serial number using the uid
-        # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-        
         # Form the complete charge_point_id
         charge_point_id = request.uid
         
@@ -1514,11 +1399,6 @@ async def options_charger_analytics():
 @app.post("/api/charger_analytics")
 async def charger_analytics(request: ChargerAnalyticsRequest):
 
-    # charger_serialnum = await central_system.getChargerSerialNum(request.charger_id)
-    
-    # Form the complete charge_point_id
-    # charge_point_id = request.uid
-
     # Initialize variables to store the results
     start_time = request.start_time or datetime.min.replace(hour=0, minute=0, second=0, microsecond=0)
     end_time = request.end_time or datetime.max.replace(hour=23, minute=59, second=59, microsecond=0)
@@ -1648,7 +1528,6 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
         return analytics.get(charger_id, {"error": "Charger ID not found."})
     
     return {"analytics": analytics}
-
 
 if __name__ == "__main__":
     port=int(config("F_SERVER_PORT"))
