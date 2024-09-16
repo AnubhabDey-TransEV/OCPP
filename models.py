@@ -1,4 +1,4 @@
-from peewee import Model, AutoField, CharField, DateTimeField, IntegerField, FloatField, UUIDField, TextField
+from peewee import Model, AutoField, CharField, DateTimeField, IntegerField, FloatField, UUIDField, TextField, DecimalField
 import uuid
 from dbconn import get_database
 
@@ -26,7 +26,6 @@ class Logs(Model):
         table_name = 'logs'
 
 class Transaction(BaseModel):
-
     uuiddb = CharField(default=getUUID)    
     charger_id = CharField()
     connector_id = IntegerField()
@@ -59,7 +58,6 @@ class Reservation(BaseModel):
         table_name = 'reservations'
 
 class OCPPMessageCMS(BaseModel):
-
     uuiddb = CharField(default=getUUID)
     message_type = CharField()
     charger_id = CharField()
@@ -109,6 +107,17 @@ class Analytics(BaseModel):
     class Meta:
         table_name = 'analytics'
 
+class Wallet(BaseModel):
+    uid = CharField(unique=True)  # Wallet UID (for internal tracking)
+    user_id = CharField()  # Directly store the userId from the external API
+    balance = DecimalField(default=0.0)  # Wallet balance
+
+    class Meta:
+        table_name = 'wallets'
+
 # Create the tables
 db.connect()
-db.create_tables([Transaction, Reservation, OCPPMessageCMS, OCPPMessageCharger, QRCodeData, Analytics, Logs], safe=True)
+db.create_tables([
+    Transaction, Reservation, OCPPMessageCMS, OCPPMessageCharger, 
+    QRCodeData, Analytics, Logs, Wallet
+], safe=True)
