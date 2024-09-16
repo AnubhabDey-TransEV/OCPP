@@ -1,6 +1,7 @@
-from peewee import Model, AutoField, CharField, DateTimeField, IntegerField, FloatField, UUIDField, TextField, DecimalField
+from peewee import Model, AutoField, CharField, DateTimeField, IntegerField, FloatField, UUIDField, TextField, DecimalField, ForeignKeyField
 import uuid
 from dbconn import get_database
+from datetime import datetime
 
 # Get the database connection
 db = get_database()
@@ -115,9 +116,32 @@ class Wallet(BaseModel):
     class Meta:
         table_name = 'wallets'
 
+class WalletRecharge(BaseModel):
+    user_id = CharField()
+    wallet_id = ForeignKeyField(Wallet, backref="recharges")
+    balance_before = FloatField()
+    recharge_amount = FloatField()
+    balance_after = FloatField()
+    recharged_at = DateTimeField(default=datetime.now)
+
+    class Meta:
+        table_name = 'wallet_recharge'
+
+class WalletTransactions(BaseModel):
+    user_id = CharField()  # The ID of the user involved in the transaction
+    wallet_id = ForeignKeyField(Wallet, backref='transactions')  # Foreign key to the wallet
+    transaction_type = CharField()  # Either 'credit' or 'debit'
+    transaction_time = DateTimeField(default=datetime.now)  # Timestamp of the transaction
+    amount = FloatField()  # Amount involved in the transaction
+    balance_before = FloatField()  # Balance before the transaction
+    balance_after = FloatField()  # Balance after the transaction
+
+    class Meta:
+        table_name = 'wallet_transactions'  # Define the table name
+
 # Create the tables
 db.connect()
 db.create_tables([
     Transaction, Reservation, OCPPMessageCMS, OCPPMessageCharger, 
-    QRCodeData, Analytics, Logs, Wallet
+    QRCodeData, Analytics, Logs, Wallet, WalletRecharge, WalletTransactions
 ], safe=True)

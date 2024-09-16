@@ -24,8 +24,11 @@ from cachetools import TTLCache, cached
 import time
 import valkey
 from contextlib import asynccontextmanager
+from wallet_methods import create_wallet_route, delete_wallet, recharge_wallet, edit_wallet, debit_wallet, get_wallet_recharge_history, get_wallet_transaction_history
+from wallet_api_models import UserIDRequest, RechargeWalletRequest, EditWalletRequest, DebitWalletRequest
 
 setup_logging()
+# logging.getLogger().setLevel(logging.DEBUG)
 
 CHARGER_DATA_KEY = "charger_data_cache"
 CACHE_EXPIRY = 7200  # Cache TTL in seconds (2 hours)  # Cache for 2 hours
@@ -1528,6 +1531,38 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
         return analytics.get(charger_id, {"error": "Charger ID not found."})
     
     return {"analytics": analytics}
+
+@app.post("/api/wallet/create")
+async def create_wallet_for_user(user: UserIDRequest):
+    api_url = config("APICHARGERDATA")  # Load API URL from .env
+    apiauthkey = config("APIAUTHKEY")   # Load API Auth key from .env
+
+    # Call the wallet creation logic from wallet_methods.py using user_id from the request body
+    return await create_wallet_route(api_url, apiauthkey, user.user_id)
+
+@app.post("/api/wallet/delete")
+async def delete_wallet_data(request: UserIDRequest):
+    return await delete_wallet(request.user_id)
+
+@app.post("/api/wallet/recharge")
+async def recharge_wallet_route(request: RechargeWalletRequest):
+    return await recharge_wallet(request.user_id, request.recharge_amount)
+
+@app.post("/api/wallet/edit")
+async def edit_wallet_route(request: EditWalletRequest):
+    return await edit_wallet(request.user_id, request.balance)
+
+@app.post("/api/wallet/debit")
+async def debit_wallet_route(request: DebitWalletRequest):
+    return await debit_wallet(request.user_id, request.debit_amount)
+
+@app.post("/api/wallet/recharge-history")
+async def get_recharge_history_route(request: UserIDRequest):
+    return await get_wallet_recharge_history(request.user_id)
+
+@app.post("/api/wallet/transaction-history")
+async def get_transaction_history_route(request: UserIDRequest):
+    return await get_wallet_transaction_history(request.user_id)
 
 if __name__ == "__main__":
     port=int(config("F_SERVER_PORT"))
