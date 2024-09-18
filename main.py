@@ -341,7 +341,7 @@ class CentralSystem:
                 logging.info(f"Removed {charge_point_id} from local active connections.")
 
             # Close the WebSocket connection between the charger and backend if it exists
-            ws_adapter = charge_point.ws_adapter  # Assuming ChargePoint has a WebSocket adapter
+            ws_adapter = charge_point.websocket  # Assuming ChargePoint has a WebSocket adapter
 
             if ws_adapter:
                 try:
