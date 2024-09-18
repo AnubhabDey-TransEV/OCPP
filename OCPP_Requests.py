@@ -19,7 +19,7 @@ class ChargePoint(CP):
         }
         self.online = False  # Track if the charger is online
         self.has_error = False  # Track if the charger has an error
-        self.last_message_time = datetime.now(dt_timezone.utc)  # Timestamp of the last received message
+        self.last_message_time = datetime.now()  # Timestamp of the last received message
 
     def currdatetime(self):
         utc_time = datetime.now(dt_timezone.utc)

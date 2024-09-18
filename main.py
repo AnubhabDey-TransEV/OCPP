@@ -124,6 +124,9 @@ class CentralSystem:
         # Store the WebSocket connection in Valkey with the charge_point_id as the key
         valkey_client.set(f"active_connections:{charge_point_id}", os.getpid())  # Store worker/process ID with charge_point_id
 
+        # Add the charge_point_id to self.active_connections
+        self.active_connections[charge_point_id] = websocket
+
         # Create a WebSocket adapter for the charge point
         ws_adapter = WebSocketAdapter(websocket)
         charge_point = ChargePoint(charge_point_id, ws_adapter)
@@ -149,18 +152,21 @@ class CentralSystem:
             await start_task
 
         except WebSocketDisconnect:
-            # Handle WebSocket disconnect: remove from Valkey and local memory
+            # Handle WebSocket disconnect: remove from Valkey, self.active_connections, and local memory
             logging.info(f"Charge point {charge_point_id} disconnected.")
             valkey_client.delete(f"active_connections:{charge_point_id}")  # Remove from Valkey
-            self.charge_points[charge_point_id].online = False  # Remove from local memory
+            self.active_connections.pop(charge_point_id, None)  # Remove from self.active_connections
+            self.charge_points[charge_point_id].online = False  # Mark charger as offline
             await self.notify_frontend(charge_point_id, online=False)
 
         except Exception as e:
+            # Handle any other exceptions, cleanup Valkey and active connections
             logging.error(f"Error occurred while handling charge point {charge_point_id}: {e}")
-            valkey_client.delete(f"active_connections:{charge_point_id}")  # Remove from Valkey in case of an error
-            self.charge_points[charge_point_id].online = False
+            valkey_client.delete(f"active_connections:{charge_point_id}")  # Remove from Valkey
+            self.active_connections.pop(charge_point_id, None)  # Remove from self.active_connections
+            self.charge_points[charge_point_id].online = False  # Mark charger as offline
             await self.notify_frontend(charge_point_id, online=False)
-            await websocket.close()
+            await websocket.close()  # Close the WebSocket connection
 
     async def handle_frontend_websocket(self, websocket: WebSocket, uid: str):
         await websocket.accept()
@@ -216,13 +222,6 @@ class CentralSystem:
                     })
                 except Exception as e:
                     logging.error(f"Error sending WebSocket message to frontend for charger {charge_point_id}: {e}")
-                    # If sending fails, close and remove this WebSocket connection
-                    await ws.close()
-                    self.frontend_connections[charge_point_id].remove(ws)
-
-            # Clean up if no more frontend connections exist for this charger
-            if not self.frontend_connections[charge_point_id]:
-                del self.frontend_connections[charge_point_id]
 
     async def send_heartbeat_interval_change(self, charge_point_id: str):
         try:
@@ -304,12 +303,11 @@ class CentralSystem:
     
     async def check_inactivity_and_update_status(self, charge_point_id: str):
         """
-        Check the last_message_time for the specified charger, and if it has been inactive for 
-        more than 2 minutes and is still marked as online, mark it as offline, 
-        remove it from active connections, and close the WebSocket connection between 
-        the charger and the backend if stale.
+        Check the last_message_time for the specified charger. If it has been inactive for more than 2 minutes 
+        and is still marked as online, mark it as offline, remove it from active connections, 
+        and close any stale WebSocket connections between the charger and the backend.
         """
-    # Get the charger from the central system's charge_points dictionary
+        # Get the charger from the central system's charge_points dictionary
         charge_point = self.charge_points.get(charge_point_id)
 
         if not charge_point:
@@ -327,7 +325,6 @@ class CentralSystem:
             # If the charger is marked as online but has been inactive for more than 2 minutes, update its status to offline
             charge_point.online = False
             charge_point.state["status"] = "Offline"
-            charge_point.state["last_message_time"] = last_message_time.isoformat()
             logging.info(f"Charger {charge_point_id} has been inactive for more than 2 minutes. Marking it as offline.")
 
             # Notify the frontend about the charger going offline with updated status
@@ -344,18 +341,15 @@ class CentralSystem:
                 logging.info(f"Removed {charge_point_id} from local active connections.")
 
             # Close the WebSocket connection between the charger and backend if it exists
-            if charge_point_id in self.charge_points:
-                ws_adapter = charge_point.ws_adapter  # Assuming ChargePoint has a WebSocket adapter
+            ws_adapter = charge_point.ws_adapter  # Assuming ChargePoint has a WebSocket adapter
 
+            if ws_adapter:
                 try:
                     # Close the WebSocket connection to the charger
                     await ws_adapter.close()
                     logging.info(f"Closed WebSocket connection for charger {charge_point_id}.")
                 except Exception as e:
                     logging.error(f"Error closing WebSocket for {charge_point_id}: {e}")
-
-        # No return since the charger status is not needed anymore
-
     
     async def verify_charger_id(self, charge_point_id: str) -> bool:
         """
