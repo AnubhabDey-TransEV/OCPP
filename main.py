@@ -302,6 +302,31 @@ class CentralSystem:
         charger_data = response.json().get("data", [])
         return charger_data
     
+    async def check_inactivity_and_update_status(self, charge_point_id: str):
+    
+    # Get the charger from the central system's charge_points dictionary
+        charge_point = self.charge_points.get(charge_point_id)
+
+        if not charge_point:
+            raise HTTPException(status_code=404, detail=f"Charger {charge_point_id} not found")
+
+        # Get the current time and the time of the last message
+        current_time = datetime.now(dt_timezone.utc)
+        last_message_time = charge_point.last_message_time
+
+        # Calculate the difference in time (in seconds)
+        time_difference = (current_time - last_message_time).total_seconds()
+
+        # Check if more than 2 minutes (120 seconds) have passed since the last message
+        if time_difference > 120 and charge_point.online:
+            # If the charger is marked as online but has been inactive for more than 2 minutes, update its status to offline
+            charge_point.online = False
+            charge_point.state["status"] = "Offline"
+            charge_point.state["last_message_time"] = last_message_time.isoformat()
+            logging.info(f"Charger {charge_point_id} has been inactive for more than 2 minutes. Marking it as offline.")
+
+            # Notify the frontend about the charger going offline with updated status
+            await self.notify_frontend(charge_point_id, online=False)
     
     async def verify_charger_id(self, charge_point_id: str) -> bool:
         """
@@ -1531,6 +1556,19 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
         return analytics.get(charger_id, {"error": "Charger ID not found."})
     
     return {"analytics": analytics}
+
+@app.post("/api/check_charger_inactivity")
+async def check_charger_inactivity(request: StatusRequest):
+    """
+    API endpoint that allows the frontend to check if a charger has been inactive for more than 2 minutes.
+    If the charger has been inactive and is still marked as online, it will update the status to offline.
+    """
+    charge_point_id = request.uid
+
+    # Call the method to check inactivity and update the status if necessary
+    result = await central_system.check_inactivity_and_update_status(charge_point_id)
+
+    return result
 
 @app.post("/api/wallet/create")
 async def create_wallet_for_user(user: UserIDRequest):
