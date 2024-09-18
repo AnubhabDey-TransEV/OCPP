@@ -303,7 +303,12 @@ class CentralSystem:
         return charger_data
     
     async def check_inactivity_and_update_status(self, charge_point_id: str):
-    
+        """
+        Check the last_message_time for the specified charger, and if it has been inactive for 
+        more than 2 minutes and is still marked as online, mark it as offline, 
+        remove it from active connections, and close the WebSocket connection between 
+        the charger and the backend if stale.
+        """
     # Get the charger from the central system's charge_points dictionary
         charge_point = self.charge_points.get(charge_point_id)
 
@@ -327,6 +332,30 @@ class CentralSystem:
 
             # Notify the frontend about the charger going offline with updated status
             await self.notify_frontend(charge_point_id, online=False)
+
+            # Remove the charger from active connections in Valkey
+            if f"active_connections:{charge_point_id}" in valkey_client:
+                valkey_client.delete(f"active_connections:{charge_point_id}")
+                logging.info(f"Removed {charge_point_id} from Valkey active connections.")
+
+            # Remove the charger from self.active_connections
+            if charge_point_id in self.active_connections:
+                del self.active_connections[charge_point_id]
+                logging.info(f"Removed {charge_point_id} from local active connections.")
+
+            # Close the WebSocket connection between the charger and backend if it exists
+            if charge_point_id in self.charge_points:
+                ws_adapter = charge_point.ws_adapter  # Assuming ChargePoint has a WebSocket adapter
+
+                try:
+                    # Close the WebSocket connection to the charger
+                    await ws_adapter.close()
+                    logging.info(f"Closed WebSocket connection for charger {charge_point_id}.")
+                except Exception as e:
+                    logging.error(f"Error closing WebSocket for {charge_point_id}: {e}")
+
+        # No return since the charger status is not needed anymore
+
     
     async def verify_charger_id(self, charge_point_id: str) -> bool:
         """
