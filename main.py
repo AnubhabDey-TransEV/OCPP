@@ -314,7 +314,7 @@ class CentralSystem:
             raise HTTPException(status_code=404, detail=f"Charger {charge_point_id} not found")
 
         # Get the current time and the time of the last message
-        current_time = datetime.now(dt_timezone.utc)
+        current_time = datetime.now()
         last_message_time = charge_point.last_message_time
 
         # Calculate the difference in time (in seconds)
