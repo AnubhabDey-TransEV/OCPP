@@ -22,10 +22,7 @@ class ChargePoint(CP):
         self.last_message_time = datetime.now()  # Timestamp of the last received message
 
     def currdatetime(self):
-        utc_time = datetime.now(dt_timezone.utc)
-        ist = timezone('Asia/Kolkata')
-        ist_time = utc_time.astimezone(ist)
-        return ist_time.isoformat()
+       return datetime.now()
     
     def update_connector_state(self, connector_id, status=None, meter_value=None, error_code=None, transaction_id=None):
         if connector_id not in self.state["connectors"]:

@@ -17,7 +17,7 @@ import json
 from decouple import config
 import os
 from OCPP_Requests import ChargePoint  # Assuming this is where ChargePoint is implemented
-from models import Reservation, QRCodeData, db, Analytics
+from models import Reservation, QRCodeData, db, Analytics, OCPPMessageCharger as ChargerToCMS
 from Chargers_to_CMS_Parser import parse_and_store_cancel_reservation_response  # Assuming this handles responses
 from loggingHandler import setup_logging
 from cachetools import TTLCache, cached
@@ -230,7 +230,7 @@ class CentralSystem:
                 charge_point_id=charge_point_id,
                 request_method='change_configuration',
                 key='HeartbeatInterval',
-                value='60'
+                value='15'
             )
 
             if response.status == 'Accepted':
@@ -430,6 +430,51 @@ class CentralSystem:
             parse_and_store_cancel_reservation_response(charge_point_id, reservation_id=reservation_id, status='Failed')
 
         return response
+    
+    async def fetch_latest_charger_to_cms_message(self, charge_point_id, message_type):
+        """
+        Fetch the latest message from the charger-to-CMS table for the given charge point and message type.
+        Return the whole entry as JSON, including any dynamic fields.
+        """
+        try:
+            # Use raw SQL to fetch all fields from the table dynamically
+            query = """
+                SELECT * FROM Charger_to_CMS
+                WHERE charger_id = %s AND message_type = %s
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """
+            # Execute the query with the parameters
+            cursor = db.execute_sql(query, (charge_point_id, message_type))
+            
+            # Fetch the first row
+            row = cursor.fetchone()
+
+            # If no row is found, return an error message
+            if not row:
+                return {"error": "No message received from charger."}
+
+            # Get column names dynamically
+            column_names = [desc[0] for desc in cursor.description]
+
+            # Convert the row to a dictionary using column names
+            message_data = dict(zip(column_names, row))
+
+            # If there is a payload field and it's JSON, deserialize it
+            if 'payload' in message_data and message_data['payload']:
+                try:
+                    message_data['payload'] = json.loads(message_data['payload'])
+                except json.JSONDecodeError:
+                    # If it's not valid JSON, leave it as-is
+                    pass
+
+            # Return the whole entry as a JSON-compatible dictionary
+            return message_data
+
+        except Exception as e:
+            logging.error(f"Error fetching latest message from charger-to-CMS table: {e}")
+            return {"error": str(e)}
+
 
 # Instantiate the central system
 central_system = CentralSystem()
@@ -541,6 +586,7 @@ class ChargerAnalyticsRequest(BaseModel):
     end_time: Optional[datetime] = None  # Optional end time for the analytics period
     charger_id: Optional[str] = None  # Optional filter by charger_id
     include_charger_ids: Optional[bool] = False  # Whether to include the list of unique charger IDs
+    user_id: Optional[str] = None
 
 # REST API endpoints
 
@@ -1027,15 +1073,28 @@ async def options_trigger_message():
 async def trigger_message(request: TriggerMessageRequest):
 
     charge_point_id = request.uid
+    requested_message = request.requested_message  # Assuming you want this as the message type
 
+    # Send the trigger message
     response = await central_system.send_request(
         charge_point_id=charge_point_id,
         request_method='trigger_message',
-        requested_message=request.requested_message
+        requested_message=requested_message
     )
-    if isinstance(response, dict) and "error" in response:
-        raise HTTPException(status_code=404, detail=response["error"])
-    return {"status": response.status}
+
+    # Check the type of `response` to ensure it's the expected type
+    if hasattr(response, 'status'):
+        status = response.status
+    else:
+        raise HTTPException(status_code=500, detail="Failed to trigger message")
+    
+    await asyncio.sleep(6)
+
+    # After sending, fetch the latest message from the database
+    latest_message = await central_system.fetch_latest_charger_to_cms_message(charge_point_id, requested_message)
+
+    return {"status": status, "latest_message": latest_message}
+
 
 # Handle OPTIONS for /api/reserve_now
 @app.options("/api/reserve_now")
@@ -1438,145 +1497,186 @@ def format_duration(seconds):
 
     return ", ".join(parts) if parts else "0 seconds"
 
-# Handle OPTIONS for /api/charger_analytics
-@app.options("/api/charger_analytics")
-async def options_charger_analytics():
-    return JSONResponse(content={}, status_code=200, headers={
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Authorization, Content-Type, x-api-key",
-    })
-
 @app.post("/api/charger_analytics")
 async def charger_analytics(request: ChargerAnalyticsRequest):
-
     # Initialize variables to store the results
     start_time = request.start_time or datetime.min.replace(hour=0, minute=0, second=0, microsecond=0)
     end_time = request.end_time or datetime.max.replace(hour=23, minute=59, second=59, microsecond=0)
     analytics = {}
 
+    # Initialize variables for cumulative logic
+    total_cumulative_uptime_seconds = 0
+    total_cumulative_transactions = 0
+    total_cumulative_electricity_used = 0
+
+    # Fetch charger data from the external API if charger_id == "cumulative"
+    if request.charger_id == "cumulative":
+        user_id = request.user_id  # Assuming user_id is passed in the body
+
+        # API call to fetch the chargers for the specific user
+        api_url = config("APIUSERCHARGERDATA")  # API URL from the config
+        apiauthkey = config("APIAUTHKEY")       # API Auth key from config
+
+        # Post request to fetch user charger data
+        response = requests.post(api_url, headers={"apiauthkey": apiauthkey}, json={"uid": user_id}, timeout=120)
+        
+        if response.status_code != 200:
+            return {"error": "Failed to fetch user charger data from external API"}
+        
+        user_charger_data = response.json().get("user_chargerunit_details", [])
+        charger_ids = [charger['uid'] for charger in user_charger_data]
+
+        # If no chargers found for the user, return null values
+        if not charger_ids:
+            return {
+                "total_uptime": "0 seconds",
+                "total_transactions": 0,
+                "total_electricity_used_kwh": 0,
+                "message": "No chargers registered for this user."
+            }
+    else:
+        # When a specific charger_id is provided
+        charger_ids = [request.charger_id]  # For a single charger
+
     # Construct dynamic WHERE clauses based on provided filters
     where_clauses = ["timestamp BETWEEN %s AND %s"]
     params = [start_time, end_time]
 
-    if request.charger_id:
-        where_clauses.append("charger_id = %s")
-        params.append(charger_id)
+    # Step 1: Calculate the uptime for each charger in the list
+    for charger_id in charger_ids:
+        where_clauses_with_charger_id = where_clauses + ["charger_id = %s"]
+        params_with_charger_id = params + [charger_id]
 
-    where_clause = " AND ".join(where_clauses)
+        uptime_query = f"""
+        SELECT charger_id, timestamp
+        FROM Charger_to_CMS
+        WHERE {" AND ".join(where_clauses_with_charger_id)}
+        ORDER BY charger_id, timestamp
+        """
 
-    # Step 1: Calculate the uptime for each charger
-    uptime_query = f"""
-    SELECT charger_id, timestamp
-    FROM Charger_to_CMS
-    WHERE {where_clause}
-    ORDER BY charger_id, timestamp
-    """
-    
-    # Execute the query with parameters
-    cursor = db.execute_sql(uptime_query, params)
-    uptime_results = cursor.fetchall()
+        # Execute the query with parameters
+        cursor = db.execute_sql(uptime_query, params_with_charger_id)
+        uptime_results = cursor.fetchall()
 
-    if not uptime_results:
-        return {"error": "No data found for the specified time range and charger."}
+        if not uptime_results:
+            continue  # Skip chargers with no data
 
-    charger_uptime_data = {}
-    current_charger = None
-    last_timestamp = None
+        charger_uptime_data = {}
+        previous_timestamp = None
+        current_charger = None
+        first_message = None
 
-    for row in uptime_results:
-        charger_id, timestamp = row
+        for row in uptime_results:
+            charger_id, timestamp = row
 
-        if charger_id != current_charger:
-            if current_charger:
-                # Calculate uptime for the previous charger
-                charger_uptime_data[current_charger]["total_uptime_seconds"] += (last_timestamp - first_message).total_seconds() + 30
-            
-            # Initialize new charger data
-            current_charger = charger_id
-            charger_uptime_data[current_charger] = {
-                "total_uptime_seconds": 0,
-                "total_possible_uptime_seconds": (end_time - start_time).total_seconds(),
-                "charger_id": charger_id,
-                "total_time_occupied_seconds": 0,  # Initialize to 0
-                "session_durations": [],
-                "peak_usage_times": [0] * 24  # 24-hour time slots
-            }
-            first_message = timestamp
-        else:
-            if (timestamp - last_timestamp).total_seconds() > 30:
-                # The charger was offline for more than 30 seconds
-                charger_uptime_data[current_charger]["total_uptime_seconds"] += (last_timestamp - first_message).total_seconds() + 30
+            if charger_id != current_charger:
+                if current_charger and previous_timestamp and first_message:
+                    # Finalize the last charger's uptime calculation for that block
+                    charger_uptime_data[current_charger]["total_uptime_seconds"] += (previous_timestamp - first_message).total_seconds()
+
+                # Initialize new charger data for a new charger or a new block
+                current_charger = charger_id
+                charger_uptime_data[current_charger] = {
+                    "total_uptime_seconds": 0,
+                    "total_possible_uptime_seconds": (end_time - start_time).total_seconds(),
+                    "charger_id": charger_id,
+                    "total_time_occupied_seconds": 0,  # Initialize to 0
+                    "session_durations": [],
+                    "peak_usage_times": [0] * 24  # 24-hour time slots
+                }
                 first_message = timestamp
+                previous_timestamp = timestamp
+            else:
+                time_difference = (timestamp - previous_timestamp).total_seconds()
 
-        last_timestamp = timestamp
+                if time_difference <= 30:
+                    # If the time difference is 30 seconds or less, accumulate the uptime
+                    charger_uptime_data[charger_id]["total_uptime_seconds"] += time_difference
+                    previous_timestamp = timestamp  # Continue to the next timestamp
+                else:
+                    # Charger was offline for more than 30 seconds, so finalize this online block
+                    charger_uptime_data[charger_id]["total_uptime_seconds"] += (previous_timestamp - first_message).total_seconds()
 
-    # Finalize the last charger's uptime
-    charger_uptime_data[current_charger]["total_uptime_seconds"] += (last_timestamp - first_message).total_seconds() + 30
+                    # Reset for the next block
+                    first_message = timestamp
+                    previous_timestamp = timestamp
 
-    # Step 2: Calculate total number of transactions, electricity used, and session-related metrics
-    for charger_id in charger_uptime_data.keys():
-        transaction_query = f"""
-        SELECT COUNT(*), SUM(total_consumption), 
-               SUM(TIMESTAMPDIFF(SECOND, start_time, stop_time)) as total_time_occupied
-        FROM transactions 
-        WHERE start_time BETWEEN %s AND %s AND charger_id = %s
-        """
-        # Execute the query with parameters
-        cursor = db.execute_sql(transaction_query, [start_time, end_time, charger_id])
-        total_transactions, total_electricity_used, total_time_occupied = cursor.fetchone()
+        # Finalize the uptime for the last charger block
+        if current_charger and previous_timestamp and first_message:
+            charger_uptime_data[current_charger]["total_uptime_seconds"] += (previous_timestamp - first_message).total_seconds()
 
-        total_electricity_used = total_electricity_used or 0.0
-        total_time_occupied = total_time_occupied or 0  # Ensure total_time_occupied is not None
+        # Step 2: Calculate total number of transactions, electricity used, and session-related metrics
+        for charger_id in charger_uptime_data.keys():
+            transaction_query = f"""
+            SELECT COUNT(*), SUM(total_consumption), 
+                   SUM(TIMESTAMPDIFF(SECOND, start_time, stop_time)) as total_time_occupied
+            FROM transactions 
+            WHERE start_time BETWEEN %s AND %s AND charger_id = %s
+            """
+            # Execute the query with parameters
+            cursor = db.execute_sql(transaction_query, [start_time, end_time, charger_id])
+            total_transactions, total_electricity_used, total_time_occupied = cursor.fetchone()
 
-        # Calculate session durations and peak usage times
-        session_query = f"""
-        SELECT start_time, TIMESTAMPDIFF(SECOND, start_time, stop_time) as session_duration
-        FROM transactions
-        WHERE start_time BETWEEN %s AND %s AND charger_id = %s
-        """
-        # Execute the query with parameters
-        cursor = db.execute_sql(session_query, [start_time, end_time, charger_id])
-        sessions = cursor.fetchall()
+            total_electricity_used = total_electricity_used or 0.0
+            total_time_occupied = total_time_occupied or 0  # Ensure total_time_occupied is not None
 
-        for start_time, session_duration in sessions:
-            charger_uptime_data[charger_id]["session_durations"].append(session_duration)
-            hour_of_day = start_time.hour
-            charger_uptime_data[charger_id]["peak_usage_times"][hour_of_day] += 1
+            # Accumulate cumulative values across all chargers (if `cumulative` is used)
+            total_cumulative_uptime_seconds += charger_uptime_data[charger_id]["total_uptime_seconds"]
+            total_cumulative_transactions += total_transactions or 0
+            total_cumulative_electricity_used += total_electricity_used
 
-        # Calculate peak usage hours
-        max_usage_count = max(charger_uptime_data[charger_id]["peak_usage_times"])
-        peak_usage_hours = [f"{hour}:00 - {hour + 1}:00" for hour, count in enumerate(charger_uptime_data[charger_id]["peak_usage_times"]) if count == max_usage_count]
+            # Calculate session durations and peak usage times
+            session_query = f"""
+            SELECT start_time, TIMESTAMPDIFF(SECOND, start_time, stop_time) as session_duration
+            FROM transactions
+            WHERE start_time BETWEEN %s AND %s AND charger_id = %s
+            """
+            # Execute the query with parameters
+            cursor = db.execute_sql(session_query, [start_time, end_time, charger_id])
+            sessions = cursor.fetchall()
 
-        if max_usage_count == 0:
-            peak_usage_hours = ["No peak usage times - charger was not used during this period."]
+            for start_time, session_duration in sessions:
+                charger_uptime_data[charger_id]["session_durations"].append(session_duration)
+                hour_of_day = start_time.hour
+                charger_uptime_data[charger_id]["peak_usage_times"][hour_of_day] += 1
 
-        # Compile the results
-        uptime_seconds = charger_uptime_data[charger_id]["total_uptime_seconds"]
-        uptime_percentage = round((uptime_seconds / charger_uptime_data[charger_id]["total_possible_uptime_seconds"]) * 100, 3)
-        average_session_duration_seconds = sum(charger_uptime_data[charger_id]["session_durations"]) / total_transactions if total_transactions > 0 else 0
-        occupancy_rate = round((total_time_occupied / charger_uptime_data[charger_id]["total_possible_uptime_seconds"]) * 100, 3)
+            # Calculate peak usage hours
+            max_usage_count = max(charger_uptime_data[charger_id]["peak_usage_times"])
+            peak_usage_hours = [f"{hour}:00 - {hour + 1}:00" for hour, count in enumerate(charger_uptime_data[charger_id]["peak_usage_times"]) if count == max_usage_count]
 
-        analytics_data = {
-            "charger_id": charger_id,
-            "timestamp": datetime.now(),
-            "total_uptime": format_duration(uptime_seconds),
-            "uptime_percentage": uptime_percentage,
-            "total_transactions": total_transactions,
-            "total_electricity_used_kwh": total_electricity_used,
-            "occupancy_rate_percentage": occupancy_rate,
-            "average_session_duration": format_duration(average_session_duration_seconds),
-            "peak_usage_times": ", ".join(peak_usage_hours)  # Store as a comma-separated string
-        }
+            if max_usage_count == 0:
+                peak_usage_hours = ["No peak usage times - charger was not used during this period."]
 
-        # Save analytics data to the database
-        Analytics.create(**analytics_data)
+            # Compile the results for this charger
+            uptime_seconds = charger_uptime_data[charger_id]["total_uptime_seconds"]
+            uptime_percentage = round((uptime_seconds / charger_uptime_data[charger_id]["total_possible_uptime_seconds"]) * 100, 3)
+            average_session_duration_seconds = sum(charger_uptime_data[charger_id]["session_durations"]) / total_transactions if total_transactions > 0 else 0
+            occupancy_rate = round((total_time_occupied / charger_uptime_data[charger_id]["total_possible_uptime_seconds"]) * 100, 3)
 
-        analytics[charger_id] = analytics_data
+            analytics_data = {
+                "charger_id": charger_id,
+                "timestamp": datetime.now(),
+                "total_uptime": format_duration(uptime_seconds),
+                "uptime_percentage": uptime_percentage,
+                "total_transactions": total_transactions,
+                "total_electricity_used_kwh": total_electricity_used,
+                "occupancy_rate_percentage": occupancy_rate,
+                "average_session_duration": format_duration(average_session_duration_seconds),
+                "peak_usage_times": ", ".join(peak_usage_hours)  # Store as a comma-separated string
+            }
+
+            # Save analytics data to the database
+            Analytics.create(**analytics_data)
+
+            analytics[charger_id] = analytics_data
 
     # If a specific charger ID is requested, return data only for that charger
-    if request.charger_id:
-        return analytics.get(charger_id, {"error": "Charger ID not found."})
+    if request.charger_id == "cumulative":
+        return {
+            "total_uptime": format_duration(total_cumulative_uptime_seconds),
+            "total_transactions": total_cumulative_transactions,
+            "total_electricity_used_kwh": total_cumulative_electricity_used,
+        }
     
     return {"analytics": analytics}
 

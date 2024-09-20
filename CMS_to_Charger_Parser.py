@@ -51,8 +51,7 @@ def convert_to_ist(original_time):
             logging.error(f"Failed to parse datetime string: {original_time}")
             return None
     if original_time.tzinfo is None:
-        original_time = pytz.utc.localize(original_time)
-    return original_time.astimezone(ist).isoformat()
+        return original_time
 
 def insert_data(data):
     existing_columns = get_existing_columns()
@@ -104,8 +103,7 @@ def insert_data(data):
     db.execute_sql(query, values)
 
 def get_ist_time():
-    utc_time = datetime.now(timezone.utc)
-    return convert_to_ist(utc_time)
+    return datetime.now()
 
 # Function to format and store messages and acknowledgments from CMS to Chargers
 def store_ocpp_message(charger_id, message_type, message_category, **kwargs):

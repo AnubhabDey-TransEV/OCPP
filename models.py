@@ -15,7 +15,7 @@ class BaseModel(Model):
 
 class Logs(Model):
     id = AutoField()
-    uuid = UUIDField(default=uuid.uuid4, unique=True)
+    uuid = UUIDField(default=getUUID, unique=True)
     log_message = TextField()
     log_level = CharField()  # e.g., INFO, ERROR, DEBUG
     timestamp = DateTimeField()
