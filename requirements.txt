@@ -34,7 +34,7 @@ markdown-it-py==3.0.0
 MarkupSafe==2.1.5
 mdurl==0.1.2
 numpy==2.0.1
-ocpp==1.0.0
+ocpp
 orjson==3.10.7
 packaging==24.1
 peewee==3.17.6

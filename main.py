@@ -1731,6 +1731,6 @@ async def get_recharge_history_route(request: UserIDRequest):
 async def get_transaction_history_route(request: UserIDRequest):
     return await get_wallet_transaction_history(request.user_id)
 
-if __name__ == "__main__":
-    port=int(config("F_SERVER_PORT"))
-    uvicorn.run(app, host=config("F_SERVER_HOST"), port=port)
+# if __name__ == "__main__":
+#     port=int(config("F_SERVER_PORT"))
+#     uvicorn.run(app, host=config("F_SERVER_HOST"), port=port)K

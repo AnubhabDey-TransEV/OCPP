@@ -2,3 +2,4 @@ OCPP
 __pycache__
 QRCodes
 .env
+*.zip
