@@ -256,23 +256,39 @@ class ChargePoint(CP):
         parser_c2c.parse_and_store_acknowledgment(self.charger_id, "SetVariables", "SetVariables", self.currdatetime(), status=response.set_variable_result[0].attribute_status)
         return response
 
-    async def get_configuration(self):
-        logging.debug(f"Sending GetConfiguration:")
+    async def get_configuration(self, component: str, variable: str = None):
+        logging.debug(f"Sending GetConfiguration for component: {component}, variable: {variable}")
+
+        # Construct the GetVariables request data
+        get_variable_data = [{'component': {'name': component}}]
+
+        # If a variable is provided, include it in the request
+        if variable:
+            get_variable_data[0]['variable'] = {'name': variable}
+
         request = call.GetVariables(
-            get_variable_data=[{'component': {'name': 'Connector'}}]
+            get_variable_data=get_variable_data
         )
 
+        # Store the get configuration request in the parser
         parser_ctc.parse_and_store_get_configuration(self.charger_id)
+        
         try:
+            # Send the request
             response = await self.call(request)
             logging.debug(f"GetVariables response: {response}")
 
+            # Log the results of the GetVariables response
             if hasattr(response, 'get_variable_result'):
-                for variable in response.get_variable_result:
-                    logging.debug(f"Key: {variable.variable.name}, Value: {variable.attribute_value}, Status: {variable.attribute_status}")
+                for result in response.get_variable_result:
+                    logging.debug(f"Component: {result.component.name}, Variable: {result.variable.name}, "
+                                f"Value: {result.attribute_value}, Status: {result.attribute_status}")
 
+            # Store the response in the parser
             parser_c2c.parse_and_store_get_configuration_response(self.charger_id, response.get_variable_result)
+            
             return response
+
         except Exception as e:
             logging.error(f"Error in get_configuration: {e}")
             raise

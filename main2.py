@@ -16,9 +16,9 @@ import requests
 import json
 from decouple import config
 import os
-from OCPP_Requests import ChargePoint  # Assuming this is where ChargePoint is implemented
+from OCPP_Requests2 import ChargePoint  # Assuming this is where ChargePoint is implemented
 from models import Reservation, QRCodeData, db, Analytics, OCPPMessageCharger as ChargerToCMS
-from Chargers_to_CMS_Parser import parse_and_store_cancel_reservation_response  # Assuming this handles responses
+from Chargers_to_CMS_Parser_2 import parse_and_store_cancel_reservation_response  # Assuming this handles responses
 from loggingHandler import setup_logging
 from cachetools import TTLCache, cached
 import time
@@ -420,7 +420,7 @@ class CentralSystem:
             next_reservation = Reservation.select().where(
                 Reservation.charger_id == charge_point_id,
                 Reservation.status == 'Reserved'
-            ).order_by(Reservation.expiry_date.asc()).first()
+            ).order_by(Reservation.expiry_date.asc()).dicts().first()
 
             if next_reservation:
                 logging.info(f"Next reservation for charger {charge_point_id}: {next_reservation.reservation_id}")
@@ -511,7 +511,7 @@ class ChangeAvailabilityRequest(BaseModel):
 
 class StartTransactionRequest(BaseModel):
     uid: str
-    id_tag: str
+    id_token: str
     connector_id: int
 
 class StopTransactionRequest(BaseModel):
@@ -554,7 +554,7 @@ class ReserveNowRequest(BaseModel):
     uid: str
     connector_id: int
     expiry_date: str
-    id_tag: str
+    id_token: str
     reservation_id: int
 
 class CancelReservationRequest(BaseModel):
@@ -562,7 +562,10 @@ class CancelReservationRequest(BaseModel):
     reservation_id: int
 
 class GetConfigurationRequest(BaseModel):
-    uid: str
+    uid: str  # The charger ID
+    component: str  # The OCPP component name (required)
+    variable: Optional[str] = None  # The variable name (optional)
+
 
 class StatusRequest(BaseModel):
     uid: str
@@ -630,7 +633,7 @@ async def start_transaction(request: StartTransactionRequest):
     response = await central_system.send_request(
         charge_point_id=charge_point_id,
         request_method='remote_start_transaction',
-        id_tag=request.id_tag,
+        id_token=request.id_token,
         connector_id=request.connector_id
     )
     if isinstance(response, dict) and "error" in response:
@@ -819,15 +822,22 @@ async def options_get_configuration():
 
 @app.post("/api/get_configuration")
 async def get_configuration(request: GetConfigurationRequest):
-
+    
     charge_point_id = request.uid
+    component = request.component  # Extract component from the request body
+    variable = request.variable  # Extract variable from the request body (optional)
 
+    # Call the central system's send_request method, passing the component and variable
     response = await central_system.send_request(
         charge_point_id=charge_point_id,
-        request_method='get_configuration'
+        request_method='get_configuration',
+        component=component,  # Pass component dynamically
+        variable=variable  # Pass variable if provided (can be None)
     )
+
     if isinstance(response, dict) and "error" in response:
         raise HTTPException(status_code=404, detail=response["error"])
+
     return response  # Return the configuration response as JSON
 
 # Handle OPTIONS for /api/status
@@ -1116,7 +1126,7 @@ async def reserve_now(request: ReserveNowRequest):
         request_method='reserve_now',
         connector_id=request.connector_id,
         expiry_date=request.expiry_date,
-        id_tag=request.id_tag,
+        id_token=request.id_token,
         reservation_id=request.reservation_id
     )
     if isinstance((response, dict) and "error" in response):
@@ -1596,11 +1606,17 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
                     # If the time difference is 30 seconds or less, accumulate the uptime
                     charger_uptime_data["total_uptime_seconds"] += time_difference
                 else:
-                    # Charger was offline for more than 30 seconds, skip adding to uptime
+                    # Charger was offline for more than 30 seconds, don't accumulate uptime
                     logging.info(f"Charger {charger_id} was offline for {time_difference - 30} seconds.")
 
             # Update the previous timestamp for the next iteration
             previous_timestamp = timestamp
+
+        # Finalize the last charger's uptime calculation if there's data
+        if previous_timestamp and first_message:
+            total_uptime_seconds = (previous_timestamp - first_message).total_seconds()
+            if total_uptime_seconds > 0:
+                charger_uptime_data["total_uptime_seconds"] += total_uptime_seconds
 
         # Step 3: Calculate total number of transactions, electricity used, and session-related metrics
         transaction_query = f"""
@@ -1679,8 +1695,6 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
 
     # Step 5: Return individual charger analytics
     return {"analytics": analytics}
-
-
 
 @app.post("/api/check_charger_inactivity")
 async def check_charger_inactivity(request: StatusRequest):
