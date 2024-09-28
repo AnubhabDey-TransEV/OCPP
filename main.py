@@ -1499,9 +1499,19 @@ def format_duration(seconds):
 
 @app.post("/api/charger_analytics")
 async def charger_analytics(request: ChargerAnalyticsRequest):
+    # Query to get the earliest and latest timestamps from your data tables
+    min_max_time_query = """
+    SELECT MIN(timestamp), MAX(timestamp)
+    FROM Charger_to_CMS
+    """
+    cursor = db.execute_sql(min_max_time_query)
+    min_time, max_time = cursor.fetchone()
+
+    # Use the earliest and latest timestamps if not provided in the request
+    start_time = request.start_time or (min_time if min_time else datetime.min.replace(hour=0, minute=0, second=0, microsecond=0))
+    end_time = request.end_time or (max_time if max_time else datetime.max.replace(hour=23, minute=59, second=59, microsecond=0))
+
     # Initialize variables to store the results
-    start_time = request.start_time or datetime.min.replace(hour=0, minute=0, second=0, microsecond=0)
-    end_time = request.end_time or datetime.max.replace(hour=23, minute=59, second=59, microsecond=0)
     analytics = {}
 
     # Initialize variables for cumulative logic
@@ -1679,8 +1689,6 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
 
     # Step 5: Return individual charger analytics
     return {"analytics": analytics}
-
-
 
 @app.post("/api/check_charger_inactivity")
 async def check_charger_inactivity(request: StatusRequest):
