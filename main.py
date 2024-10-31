@@ -11,7 +11,7 @@ from peewee import DoesNotExist
 from io import BytesIO
 import qrcode
 import uvicorn
-# import uvloop
+import uvloop
 import requests
 import json
 from decouple import config
@@ -26,6 +26,8 @@ import valkey
 from contextlib import asynccontextmanager
 from wallet_methods import create_wallet_route, delete_wallet, recharge_wallet, edit_wallet, debit_wallet, get_wallet_recharge_history, get_wallet_transaction_history
 from wallet_api_models import UserIDRequest, RechargeWalletRequest, EditWalletRequest, DebitWalletRequest
+
+asyncio.set_event_loop(uvloop.new_event_loop())
 
 setup_logging()
 # logging.getLogger().setLevel(logging.DEBUG)
