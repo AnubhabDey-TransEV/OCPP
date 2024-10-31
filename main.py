@@ -67,7 +67,7 @@ async def refresh_cache():
 async def lifespan(app: FastAPI):
     # Startup actions
     try:
-        await refresh_cache()  # Cache refresh logic at startup
+        await refresh_cache()  # Cache refresh logic at startup 
         print("Startup: Cache refreshed.")
     except Exception as e:
         print(f"Failed to refresh cache: {e}")
