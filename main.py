@@ -17,7 +17,7 @@ import json
 from decouple import config
 import os
 from OCPP_Requests import ChargePoint  # Assuming this is where ChargePoint is implemented
-from models import Reservation, QRCodeData, db, Analytics, OCPPMessageCharger as ChargerToCMS
+from models import Reservation, QRCodeData, db, Analytics, OCPPMessageCharger as ChargerToCMS, OCPPMessageCMS as CMSToCharger, Transaction as Transactions
 from Chargers_to_CMS_Parser import parse_and_store_cancel_reservation_response  # Assuming this handles responses
 from loggingHandler import setup_logging
 from cachetools import TTLCache, cached
@@ -26,6 +26,8 @@ import valkey
 from contextlib import asynccontextmanager
 from wallet_methods import create_wallet_route, delete_wallet, recharge_wallet, edit_wallet, debit_wallet, get_wallet_recharge_history, get_wallet_transaction_history
 from wallet_api_models import UserIDRequest, RechargeWalletRequest, EditWalletRequest, DebitWalletRequest
+from playhouse.shortcuts import model_to_dict
+
 
 asyncio.set_event_loop(uvloop.new_event_loop())
 
@@ -1158,81 +1160,29 @@ async def options_query_charger_to_cms():
 
 @app.post("/api/query_charger_to_cms")
 async def query_charger_to_cms(request: ChargerToCMSQueryRequest):
-    # Initialize the base query
-    base_query = "SELECT * FROM Charger_to_CMS WHERE 1=1"
-    params = []
-
-    # Handle the uid filter, if provided
-    if request.uid:
-        # Fetch the serial number using the uid
-        # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-        
-        # Form the complete charge_point_id
-        charge_point_id = request.uid
-        
-        # Apply the charge_point_id filter
-        base_query += " AND charger_id = %s"
-        params.append(charge_point_id)
+    query = ChargerToCMS.select()
     
-    # Add other filtering conditions if any
+    if request.uid:
+        query = query.where(ChargerToCMS.charger_id == request.uid)
+    
     if request.filters:
         for column, value in request.filters.items():
-            # Check if the column exists in the table
-            column_check_query = """
-            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
-            WHERE TABLE_NAME = 'Charger_to_CMS' AND COLUMN_NAME = %s AND TABLE_SCHEMA = DATABASE();
-            """
-            column_exists = db.execute_sql(column_check_query, (column,)).fetchone()[0]
-
-            if not column_exists:
+            if not ChargerToCMS._meta.fields.get(column):
                 raise HTTPException(status_code=404, detail=f"Column '{column}' not found in Charger_to_CMS table.")
-
-            # Add condition for the column
-            base_query += f" AND {column} = %s"
-            params.append(value)
-
-    # Apply the timestamp filter if provided
+            query = query.where(getattr(ChargerToCMS, column) == value)
+    
     if request.start_time:
-        base_query += " AND timestamp >= %s"
-        params.append(request.start_time)
+        query = query.where(ChargerToCMS.timestamp >= request.start_time)
     if request.end_time:
-        base_query += " AND timestamp <= %s"
-        params.append(request.end_time)
+        query = query.where(ChargerToCMS.timestamp <= request.end_time)
 
-    # Apply the limit if specified
     if request.limit:
-        try:
-            start, end = map(int, request.limit.split('-'))
-            if start > end or start < 1 or end < 1:
-                raise ValueError
-            base_query += " ORDER BY id LIMIT %s, %s"
-            params += [start - 1, end - start + 1]
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid limit format. Use 'start-end' format, e.g., '1-100'.")
+        start, end = map(int, request.limit.split('-'))
+        query = query.order_by(ChargerToCMS.id).limit(end - start + 1).offset(start - 1)
     else:
-        base_query += " ORDER BY id"
-
-    # Execute the query
-    cursor = db.execute_sql(base_query, params)
-    rows = cursor.fetchall()
-
-    columns = [column[0] for column in cursor.description]
-
-    # Convert the result to a list of dictionaries
-    results = []
-    for row in rows:
-        row_dict = dict(zip(columns, row))
-
-        # Deserialize the payload if it’s a JSON string
-        if 'payload' in row_dict and row_dict['payload']:
-            try:
-                row_dict['payload'] = json.loads(row_dict['payload'])
-            except json.JSONDecodeError:
-                # Leave the payload as it is if it's not a valid JSON string
-                pass
-
-        results.append(row_dict)
-
+        query = query.order_by(ChargerToCMS.id)
+    
+    results = [model_to_dict(row) for row in query]
     return {"data": results}
 
 # Handle OPTIONS for /api/query_cms_to_charger
@@ -1246,82 +1196,31 @@ async def options_query_cms_to_charger():
 
 @app.post("/api/query_cms_to_charger")
 async def query_cms_to_charger(request: CMSToChargerQueryRequest):
-    # Initialize the base query
-    base_query = "SELECT * FROM CMS_to_Charger WHERE 1=1"
-    params = []
-
-    # Handle the uid filter, if provided
-    if request.uid:
-        # Fetch the serial number using the uid
-        # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-        
-        # Form the complete charge_point_id
-        charge_point_id = request.uid
-        
-        # Apply the charge_point_id filter
-        base_query += " AND charger_id = %s"
-        params.append(charge_point_id)
+    query = CMSToCharger.select()
     
-    # Add other filtering conditions if any
+    if request.uid:
+        query = query.where(CMSToCharger.charger_id == request.uid)
+    
     if request.filters:
         for column, value in request.filters.items():
-            # Check if the column exists in the table
-            column_check_query = """
-            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
-            WHERE TABLE_NAME = 'CMS_to_Charger' AND COLUMN_NAME = %s AND TABLE_SCHEMA = DATABASE();
-            """
-            column_exists = db.execute_sql(column_check_query, (column,)).fetchone()[0]
-
-            if not column_exists:
+            if not CMSToCharger._meta.fields.get(column):
                 raise HTTPException(status_code=404, detail=f"Column '{column}' not found in CMS_to_Charger table.")
+            query = query.where(getattr(CMSToCharger, column) == value)
 
-            # Add condition for the column
-            base_query += f" AND {column} = %s"
-            params.append(value)
-
-    # Apply the timestamp filter if provided
     if request.start_time:
-        base_query += " AND timestamp >= %s"
-        params.append(request.start_time)
+        query = query.where(CMSToCharger.timestamp >= request.start_time)
     if request.end_time:
-        base_query += " AND timestamp <= %s"
-        params.append(request.end_time)
+        query = query.where(CMSToCharger.timestamp <= request.end_time)
 
-    # Apply the limit if specified
     if request.limit:
-        try:
-            start, end = map(int, request.limit.split('-'))
-            if start > end or start < 1 or end < 1:
-                raise ValueError
-            base_query += " ORDER BY id LIMIT %s, %s"
-            params += [start - 1, end - start + 1]
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid limit format. Use 'start-end' format, e.g., '1-100'.")
+        start, end = map(int, request.limit.split('-'))
+        query = query.order_by(CMSToCharger.id).limit(end - start + 1).offset(start - 1)
     else:
-        base_query += " ORDER BY id"
-
-    # Execute the query
-    cursor = db.execute_sql(base_query, params)
-    rows = cursor.fetchall()
-
-    columns = [column[0] for column in cursor.description]
-
-    # Convert the result to a list of dictionaries
-    results = []
-    for row in rows:
-        row_dict = dict(zip(columns, row))
-
-        # Deserialize the payload if it’s a JSON string
-        if 'payload' in row_dict and row_dict['payload']:
-            try:
-                row_dict['payload'] = json.loads(row_dict['payload'])
-            except json.JSONDecodeError:
-                # Leave the payload as it is if it's not a valid JSON string
-                pass
-
-        results.append(row_dict)
-
+        query = query.order_by(CMSToCharger.id)
+    
+    results = [model_to_dict(row) for row in query]
     return {"data": results}
+
 
 # Handle OPTIONS for /api/query_transactions
 @app.options("/api/query_transactions")
@@ -1334,69 +1233,29 @@ async def options_query_transactions():
 
 @app.post("/api/query_transactions")
 async def query_transactions(request: ChargerToCMSQueryRequest):
-    # Initialize the base query
-    base_query = "SELECT * FROM transactions WHERE 1=1"
-    params = []
-
-    # Handle the uid filter, if provided
-    if request.uid:
-        # Form the complete charge_point_id
-        charge_point_id = request.uid
-        
-        # Apply the charge_point_id filter
-        base_query += " AND charger_id = %s"
-        params.append(charge_point_id)
+    query = Transactions.select()
     
-    # Add other filtering conditions if any
+    if request.uid:
+        query = query.where(Transactions.charger_id == request.uid)
+    
     if request.filters:
         for column, value in request.filters.items():
-            # Check if the column exists in the table
-            column_check_query = """
-            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
-            WHERE TABLE_NAME = 'transactions' AND COLUMN_NAME = %s AND TABLE_SCHEMA = DATABASE();
-            """
-            column_exists = db.execute_sql(column_check_query, (column,)).fetchone()[0]
-
-            if not column_exists:
+            if not Transactions._meta.fields.get(column):
                 raise HTTPException(status_code=404, detail=f"Column '{column}' not found in transactions table.")
+            query = query.where(getattr(Transactions, column) == value)
 
-            # Add condition for the column
-            base_query += f" AND {column} = %s"
-            params.append(value)
-
-    # Apply the timestamp filter if provided
     if request.start_time:
-        base_query += " AND start_time >= %s"
-        params.append(request.start_time)
+        query = query.where(Transactions.start_time >= request.start_time)
     if request.end_time:
-        base_query += " AND stop_time <= %s"
-        params.append(request.end_time)
+        query = query.where(Transactions.stop_time <= request.end_time)
 
-    # Apply the limit if specified
     if request.limit:
-        try:
-            start, end = map(int, request.limit.split('-'))
-            if start > end or start < 1 or end < 1:
-                raise ValueError
-            base_query += " ORDER BY id LIMIT %s, %s"
-            params += [start - 1, end - start + 1]
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid limit format. Use 'start-end' format, e.g., '1-100'.")
+        start, end = map(int, request.limit.split('-'))
+        query = query.order_by(Transactions.id).limit(end - start + 1).offset(start - 1)
     else:
-        base_query += " ORDER BY id"
-
-    # Execute the query
-    cursor = db.execute_sql(base_query, params)
-    rows = cursor.fetchall()
-
-    columns = [column[0] for column in cursor.description]
-
-    # Convert the result to a list of dictionaries
-    results = []
-    for row in rows:
-        row_dict = dict(zip(columns, row))
-        results.append(row_dict)
-
+        query = query.order_by(Transactions.id)
+    
+    results = [model_to_dict(row) for row in query]
     return {"data": results}
 
 # Handle OPTIONS for /api/query_reservations
@@ -1410,73 +1269,31 @@ async def options_query_reservations():
 
 @app.post("/api/query_reservations")
 async def query_reservations(request: ChargerToCMSQueryRequest):
-    # Initialize the base query
-    base_query = "SELECT * FROM reservations WHERE 1=1"
-    params = []
-
-    # Handle the uid filter, if provided
-    if request.uid:
-        # Fetch the serial number using the uid
-        # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
-        
-        # Form the complete charge_point_id
-        charge_point_id = request.uid
-        
-        # Apply the charge_point_id filter
-        base_query += " AND charger_id = %s"
-        params.append(charge_point_id)
+    query = Reservation.select()
     
-    # Add other filtering conditions if any
+    if request.uid:
+        query = query.where(Reservation.charger_id == request.uid)
+    
     if request.filters:
         for column, value in request.filters.items():
-            # Check if the column exists in the table
-            column_check_query = """
-            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
-            WHERE TABLE_NAME = 'reservations' AND COLUMN_NAME = %s AND TABLE_SCHEMA = DATABASE();
-            """
-            column_exists = db.execute_sql(column_check_query, (column,)).fetchone()[0]
-
-            if not column_exists:
+            if not Reservation._meta.fields.get(column):
                 raise HTTPException(status_code=404, detail=f"Column '{column}' not found in reservations table.")
+            query = query.where(getattr(Reservation, column) == value)
 
-            # Add condition for the column
-            base_query += f" AND {column} = %s"
-            params.append(value)
-
-    # Apply the timestamp filter if provided
     if request.start_time:
-        base_query += " AND reserved_at >= %s"
-        params.append(request.start_time)
+        query = query.where(Reservation.reserved_at >= request.start_time)
     if request.end_time:
-        base_query += " AND reserved_at <= %s"
-        params.append(request.end_time)
+        query = query.where(Reservation.reserved_at <= request.end_time)
 
-    # Apply the limit if specified
     if request.limit:
-        try:
-            start, end = map(int, request.limit.split('-'))
-            if start > end or start < 1 or end < 1:
-                raise ValueError
-            base_query += " ORDER BY id LIMIT %s, %s"
-            params += [start - 1, end - start + 1]
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid limit format. Use 'start-end' format, e.g., '1-100'.")
+        start, end = map(int, request.limit.split('-'))
+        query = query.order_by(Reservation.id).limit(end - start + 1).offset(start - 1)
     else:
-        base_query += " ORDER BY id"
-
-    # Execute the query
-    cursor = db.execute_sql(base_query, params)
-    rows = cursor.fetchall()
-
-    columns = [column[0] for column in cursor.description]
-
-    # Convert the result to a list of dictionaries
-    results = []
-    for row in rows:
-        row_dict = dict(zip(columns, row))
-        results.append(row_dict)
-
+        query = query.order_by(Reservation.id)
+    
+    results = [model_to_dict(row) for row in query]
     return {"data": results}
+
 
 def format_duration(seconds):
     """Convert seconds into a human-readable format: years, days, hours, minutes, seconds."""
@@ -1499,15 +1316,20 @@ def format_duration(seconds):
 
     return ", ".join(parts) if parts else "0 seconds"
 
+from datetime import datetime
+from fastapi import HTTPException
+from playhouse.shortcuts import model_to_dict
+from peewee import fn, SQL
+
 @app.post("/api/charger_analytics")
 async def charger_analytics(request: ChargerAnalyticsRequest):
     # Query to get the earliest and latest timestamps from your data tables
-    min_max_time_query = """
-    SELECT MIN(timestamp), MAX(timestamp)
-    FROM Charger_to_CMS
-    """
-    cursor = db.execute_sql(min_max_time_query)
-    min_time, max_time = cursor.fetchone()
+    min_max_time_query = ChargerToCMS.select(
+        fn.MIN(ChargerToCMS.timestamp).alias('min_time'),
+        fn.MAX(ChargerToCMS.timestamp).alias('max_time')
+    ).first()
+    min_time = min_max_time_query.min_time
+    max_time = min_max_time_query.max_time
 
     # Use the earliest and latest timestamps if not provided in the request
     start_time = request.start_time or (min_time if min_time else datetime.min.replace(hour=0, minute=0, second=0, microsecond=0))
@@ -1555,20 +1377,14 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
 
     # Step 2: Calculate the uptime for each charger in the list
     for charger_id in charger_ids:
-        where_clauses_with_charger_id = ["timestamp BETWEEN %s AND %s", "charger_id = %s"]
-        params_with_charger_id = [start_time, end_time, charger_id]
+        uptime_query = ChargerToCMS.select(
+            ChargerToCMS.charger_id, ChargerToCMS.timestamp
+        ).where(
+            (ChargerToCMS.timestamp.between(start_time, end_time)) &
+            (ChargerToCMS.charger_id == charger_id)
+        ).order_by(ChargerToCMS.charger_id, ChargerToCMS.timestamp)
 
-        # Query to fetch uptime data from Charger_to_CMS table
-        uptime_query = f"""
-        SELECT charger_id, timestamp
-        FROM Charger_to_CMS
-        WHERE {" AND ".join(where_clauses_with_charger_id)}
-        ORDER BY charger_id, timestamp
-        """
-
-        # Execute the query with parameters
-        cursor = db.execute_sql(uptime_query, params_with_charger_id)
-        uptime_results = cursor.fetchall()
+        uptime_results = list(uptime_query)
 
         # If no data (messages) is found, set the uptime to zero for this charger and continue to the next
         if not uptime_results:
@@ -1596,7 +1412,7 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
         first_message = None
 
         for row in uptime_results:
-            charger_id, timestamp = row
+            charger_id, timestamp = row.charger_id, row.timestamp
 
             if not first_message:
                 first_message = timestamp
@@ -1615,18 +1431,18 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
             previous_timestamp = timestamp
 
         # Step 3: Calculate total number of transactions, electricity used, and session-related metrics
-        transaction_query = f"""
-        SELECT COUNT(*), SUM(total_consumption), 
-               SUM(TIMESTAMPDIFF(SECOND, start_time, stop_time)) as total_time_occupied
-        FROM transactions 
-        WHERE start_time BETWEEN %s AND %s AND charger_id = %s
-        """
-        # Execute the query with parameters
-        cursor = db.execute_sql(transaction_query, [start_time, end_time, charger_id])
-        total_transactions, total_electricity_used, total_time_occupied = cursor.fetchone()
+        transaction_summary_query = Transactions.select(
+            fn.COUNT(Transactions.id).alias('total_transactions'),
+            fn.SUM(Transactions.total_consumption).alias('total_electricity_used'),
+            fn.SUM(fn.TIMESTAMPDIFF(SQL('SECOND'), Transactions.start_time, Transactions.stop_time)).alias('total_time_occupied')
+        ).where(
+            (Transactions.start_time.between(start_time, end_time)) &
+            (Transactions.charger_id == charger_id)
+        ).first()
 
-        total_electricity_used = total_electricity_used or 0.0
-        total_time_occupied = total_time_occupied or 0  # Ensure total_time_occupied is not None
+        total_transactions = transaction_summary_query.total_transactions
+        total_electricity_used = transaction_summary_query.total_electricity_used or 0.0
+        total_time_occupied = transaction_summary_query.total_time_occupied or 0  # Ensure total_time_occupied is not None
 
         # Add the current charger's metrics to the cumulative values (only if "cumulative" is requested)
         if request.charger_id == "cumulative":
@@ -1636,15 +1452,19 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
             total_cumulative_time_occupied_seconds += total_time_occupied or 0
 
         # Calculate session durations and peak usage times for each charger
-        session_query = f"""
-        SELECT start_time, TIMESTAMPDIFF(SECOND, start_time, stop_time) as session_duration
-        FROM transactions
-        WHERE start_time BETWEEN %s AND %s AND charger_id = %s
-        """
-        cursor = db.execute_sql(session_query, [start_time, end_time, charger_id])
-        sessions = cursor.fetchall()
+        session_query = Transactions.select(
+            Transactions.start_time,
+            fn.TIMESTAMPDIFF(SQL('SECOND'), Transactions.start_time, Transactions.stop_time).alias('session_duration')
+        ).where(
+            (Transactions.start_time.between(start_time, end_time)) &
+            (Transactions.charger_id == charger_id)
+        )
 
-        for start_time, session_duration in sessions:
+        sessions = list(session_query)
+
+        for session in sessions:
+            start_time = session.start_time
+            session_duration = session.session_duration
             charger_uptime_data["session_durations"].append(session_duration)
             hour_of_day = start_time.hour
             charger_uptime_data["peak_usage_times"][hour_of_day] += 1
