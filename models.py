@@ -17,10 +17,12 @@ class NetworkAnalytics(Model):
     event_type = CharField()  # 'connect', 'disconnect', 'request', or 'response'
     ev_id = CharField(null=True)  # EV identifier for WebSocket connections, null for API events
     ip_address = CharField()  # IP address associated with the event
+    ip_information = TextField()
     endpoint = CharField()  # Charger ID for WebSocket, API client endpoint for requests, 'CMS' for responses
     request_data = TextField(null=True)  # JSON or string format of request data
     response_data = TextField(null=True)  # JSON or string format of response data
     timestamp = DateTimeField(default=datetime.now)  # Date and time of the event
+
 
     class Meta:
         database = db

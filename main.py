@@ -45,6 +45,19 @@ app = FastAPI()
 valkey_uri = config("VALKEY_URI")
 valkey_client = valkey.from_url(valkey_uri)
 
+async def get_ip_information(ip_address: str):
+    try:
+        # Replace this URL with the actual IP lookup service API endpoint
+        response = requests.get(f"https://ipinfo.io/{ip_address}/json")
+        
+        if response.status_code == 200:
+            # Return the full JSON response as the IP information
+            # Convert the JSON response to a string
+            return json.dumps(response.json())
+    except Exception as e:
+        print(f"Failed to retrieve IP information for {ip_address}: {e}")
+        return None
+
 class VerifyAPIKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if request.url.path.startswith("/api/"):
@@ -63,11 +76,14 @@ class APITrackingMiddleware(BaseHTTPMiddleware):
         ip_address = request.client.host
         endpoint = request.url.path
         request_data = await request.body()
+
+        ip_info = await get_ip_information(ip_address)
         
         # Log the API request
         NetworkAnalytics.create(
             event_type="API Request",
             ip_address=ip_address,
+            ip_information = ip_info,
             endpoint=endpoint,
             request_data=request_data.decode("utf-8") if request_data else None,
             timestamp=datetime.now()
@@ -81,6 +97,7 @@ class APITrackingMiddleware(BaseHTTPMiddleware):
         NetworkAnalytics.create(
             event_type="API Response",
             ip_address=ip_address,
+            ip_information = ip_info,
             endpoint="CMS",
             response_data=response_data,
             timestamp=datetime.now()
@@ -153,13 +170,15 @@ class CentralSystem:
     async def handle_charge_point(self, websocket: WebSocket, charge_point_id: str):
         # Capture charger IP address
         ip_address = websocket.client.host
+        ip_info = await get_ip_information(ip_address)
 
         # Log WebSocket connection event
         NetworkAnalytics.create(
             event_type="EVSE Connect",
             ev_id=charge_point_id,
             ip_address=ip_address,
-            endpoint=charge_point_id,  # Charger ID as the endpoint for WebSocket
+            ip_information = ip_info,
+            endpoint="EVSE",  # Charger ID as the endpoint for WebSocket
             timestamp=datetime.now()
         )
 
@@ -173,7 +192,8 @@ class CentralSystem:
                 event_type="EVSE Disconnect",
                 ev_id=charge_point_id,
                 ip_address=ip_address,
-                endpoint=charge_point_id,
+                ip_address_information = ip_info,
+                endpoint="EVSE",
                 response_data="Charger ID verification failed",
                 timestamp=datetime.now()
             )
@@ -223,7 +243,8 @@ class CentralSystem:
                 event_type="EVSE Disconnect",
                 ev_id=charge_point_id,
                 ip_address=ip_address,
-                endpoint=charge_point_id,
+                ip_information = ip_info,
+                endpoint="EVSE",
                 timestamp=datetime.now()
             )
 
@@ -238,10 +259,11 @@ class CentralSystem:
 
             # Log error event with the exception details
             NetworkAnalytics.create(
-                event_type="EVSE Disconnect",
+                event_type="EVSE Error (Not Connected)",
                 ev_id=charge_point_id,
                 ip_address=ip_address,
-                endpoint=charge_point_id,
+                ip_information = ip_info,
+                endpoint="EVSE",
                 response_data=f"Error: {e}",
                 timestamp=datetime.now()
             )
