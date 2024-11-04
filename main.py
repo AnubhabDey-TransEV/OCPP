@@ -165,9 +165,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 middleware = [
+    Middleware(RateLimitMiddleware),
     Middleware(APITrackingMiddleware),
     Middleware(VerifyAPIKeyMiddleware),
-    Middleware(RateLimitMiddleware),
     Middleware(
         CORSMiddleware,
         allow_origins=['*'],
