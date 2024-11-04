@@ -57,7 +57,7 @@ async def get_ip_information(ip_address: str):
     except Exception as e:
         print(f"Failed to retrieve IP information for {ip_address}: {e}")
         return None
-
+    
 class VerifyAPIKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if request.url.path.startswith("/api/"):
@@ -93,13 +93,11 @@ class APITrackingMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         
         # Capture and log the response data
-        response_data = response.body.decode("utf-8") if hasattr(response, 'body') else None
         NetworkAnalytics.create(
             event_type="API Response",
             ip_address=ip_address,
             ip_information = ip_info,
             endpoint="CMS",
-            response_data=response_data,
             timestamp=datetime.now()
         )
 
