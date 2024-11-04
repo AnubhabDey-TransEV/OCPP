@@ -13,6 +13,19 @@ class BaseModel(Model):
     class Meta:
         database = db
 
+class NetworkAnalytics(Model):
+    event_type = CharField()  # 'connect', 'disconnect', 'request', or 'response'
+    ev_id = CharField(null=True)  # EV identifier for WebSocket connections, null for API events
+    ip_address = CharField()  # IP address associated with the event
+    endpoint = CharField()  # Charger ID for WebSocket, API client endpoint for requests, 'CMS' for responses
+    request_data = TextField(null=True)  # JSON or string format of request data
+    response_data = TextField(null=True)  # JSON or string format of response data
+    timestamp = DateTimeField(default=datetime.now)  # Date and time of the event
+
+    class Meta:
+        database = db
+        table_name = 'network_analytics'
+
 class Logs(Model):
     id = AutoField()
     uuid = UUIDField(default=getUUID, unique=True)
@@ -143,5 +156,5 @@ class WalletTransactions(BaseModel):
 db.connect()
 db.create_tables([
     Transaction, Reservation, OCPPMessageCMS, OCPPMessageCharger, 
-    QRCodeData, Analytics, Logs, Wallet, WalletRecharge, WalletTransactions
+    QRCodeData, Analytics, Logs, Wallet, WalletRecharge, WalletTransactions, NetworkAnalytics
 ], safe=True)
