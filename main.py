@@ -48,7 +48,7 @@ valkey_client = valkey.from_url(valkey_uri)
 async def get_ip_information(ip_address: str):
     try:
         # Replace this URL with the actual IP lookup service API endpoint
-        response = requests.get(f"https://ipinfo.io/{ip_address}/json")
+        response = requests.get(f"http://ip-api.com/json/{ip_address}")
         
         if response.status_code == 200:
             # Return the full JSON response as the IP information
