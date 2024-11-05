@@ -1,29 +1,39 @@
 import requests
 import json
-from peewee import MySQLDatabase, Model, TextField, FloatField, BooleanField, IntegerField, SQL
+from peewee import (
+    MySQLDatabase,
+    Model,
+    TextField,
+    FloatField,
+    BooleanField,
+    IntegerField,
+    SQL,
+)
 
 # Fetch JSON data from the API endpoint
-response = requests.get('https://evchargercmsbackend.onrender.com/admin/listofcharges')
+response = requests.get(
+    "https://evchargercmsbackend.onrender.com/admin/listofcharges"
+)
 
 # Connect to the MySQL database
 database = MySQLDatabase(
-    'OCPP',
-    user='ocpphandler',
-    password='ocpp2024',
-    host='localhost',
-    port=3306
+    "OCPP",
+    user="ocpphandler",
+    password="ocpp2024",
+    host="localhost",
+    port=3306,
 )
+
 
 class BaseModel(Model):
     class Meta:
         database = database
-        table_name = 'Charger_Data'
+        table_name = "Charger_Data"
+
 
 # Create a function to determine field types dynamically
 def create_dynamic_model(columns):
-    fields = {
-        'id': IntegerField(primary_key=True)
-    }
+    fields = {"id": IntegerField(primary_key=True)}
 
     for column_name, value in columns.items():
         if isinstance(value, int):
@@ -34,9 +44,10 @@ def create_dynamic_model(columns):
             fields[column_name] = BooleanField(null=True)
         else:
             fields[column_name] = TextField(null=True)
-    
-    dynamic_model = type('Charger_Data', (BaseModel,), fields)
+
+    dynamic_model = type("Charger_Data", (BaseModel,), fields)
     return dynamic_model
+
 
 # Add missing columns to the existing table
 def add_missing_columns(model, columns):
@@ -53,12 +64,15 @@ def add_missing_columns(model, columns):
                     field = BooleanField(null=True)
                 else:
                     field = TextField(null=True)
-                
+
                 # Add the new column to the model
                 field.add_to_class(model, column_name)
-                
+
                 # Add the new column to the database
-                database.execute_sql(f'ALTER TABLE {model._meta.table_name} ADD COLUMN {column_name} {field.ddl()}')
+                database.execute_sql(
+                    f"ALTER TABLE {model._meta.table_name} ADD COLUMN {column_name} {field.ddl()}"
+                )
+
 
 # Load JSON data
 json_data = json.loads(response.content)

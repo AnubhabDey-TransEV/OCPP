@@ -10,19 +10,26 @@ from decimal import Decimal
 
 # Asynchronous function to fetch user data using httpx
 async def fetch_user_data(api_url: str, api_key: str):
-    timeout=timeout = httpx.Timeout(120)
+    timeout = timeout = httpx.Timeout(120)
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(api_url, headers={"apiauthkey": api_key}, timeout=timeout)
+            response = await client.get(
+                api_url, headers={"apiauthkey": api_key}, timeout=timeout
+            )
             response.raise_for_status()
-            
+
             data = response.json()
             logging.info(f"API Response: {data}")  # Log the full response
-            logging.info (data.get("data"))
-            return data.get("data", [])  # Safely access the "data" field, fallback to empty list
+            logging.info(data.get("data"))
+            return data.get(
+                "data", []
+            )  # Safely access the "data" field, fallback to empty list
     except httpx.HTTPStatusError as e:
         logging.error(f"Error fetching user data: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch user data: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch user data: {e}"
+        )
+
 
 # Method to get unique user IDs from the API
 async def get_unique_user_ids(api_url: str, api_key: str):
@@ -31,24 +38,32 @@ async def get_unique_user_ids(api_url: str, api_key: str):
     user_ids = {user["userId"] for user in user_data}
     return list(user_ids)
 
+
 # Method to check if a userId exists in the API response
 async def check_user_id(api_url: str, api_key: str, user_id: str):
     user_ids = await get_unique_user_ids(api_url, api_key)
     logging.info(f"User IDs from API: {user_ids}")  # Log the list of user IDs
-    logging.info(f"Checking for user ID: {user_id}")  # Log the user_id to be checked
-    
+    logging.info(
+        f"Checking for user ID: {user_id}"
+    )  # Log the user_id to be checked
+
     if not user_ids:
-        raise HTTPException(status_code=500, detail="No user data received from API.")
-    
+        raise HTTPException(
+            status_code=500, detail="No user data received from API."
+        )
+
     return user_id in user_ids
+
 
 async def get_minimum_recharge_amount():
     minimum_amount = 100
     return minimum_amount
 
+
 # Create a custom wallet UID generator
 async def generate_wallet_uid():
     return str(uuid.uuid4())
+
 
 # Method to create a wallet for a specific user if they don't already have one
 async def create_wallet_for_user(user_id: str):
@@ -62,20 +77,26 @@ async def create_wallet_for_user(user_id: str):
 
         if result["exists"]:
             logging.warning(f"Wallet already exists for user {user_id}")
-            raise HTTPException(status_code=409, detail=f"Wallet already exists for user {user_id}.")
+            raise HTTPException(
+                status_code=409,
+                detail=f"Wallet already exists for user {user_id}.",
+            )
 
         # Create a new wallet for the user
         wallet = Wallet.create(
             uid=await generate_wallet_uid(),
             user_id=user_id,
-            balance=0.0  # Default balance to 0
+            balance=0.0,  # Default balance to 0
         )
-        logging.info(f"Created new wallet for user {user_id} with ID {wallet.uid}")
+        logging.info(
+            f"Created new wallet for user {user_id} with ID {wallet.uid}"
+        )
         return {"success": True, "wallet": wallet}
 
     except Exception as e:
         logging.error(f"Error creating wallet for user {user_id}: {e}")
         return {"success": False, "error": str(e)}
+
 
 # Method to process the wallet creation flow
 async def process_wallet_creation(api_url: str, api_key: str, user_id: str):
@@ -91,10 +112,15 @@ async def process_wallet_creation(api_url: str, api_key: str, user_id: str):
         logging.info(f"Create wallet result for {user_id}: {result}")
 
         if not result.get("success"):
-            logging.error(f"Failed to create wallet for user {user_id}: {result.get('error')}")
+            logging.error(
+                f"Failed to create wallet for user {user_id}: {result.get('error')}"
+            )
             return {"message": result.get("error", "Failed to create wallet")}
         else:
-            return {"message": "Wallet created successfully", "wallet": result["wallet"]}
+            return {
+                "message": "Wallet created successfully",
+                "wallet": result["wallet"],
+            }
     else:
         logging.error(f"User ID {user_id} does not exist in API")
         return {"error": f"User ID {user_id} does not exist in the API."}
@@ -112,15 +138,20 @@ async def create_wallet_route(api_url: str, api_key: str, user_id: str):
 
         # Check if there was an error during wallet creation
         if "error" in result:
-            logging.error(f"Error creating wallet for {user_id}: {result['error']}")
+            logging.error(
+                f"Error creating wallet for {user_id}: {result['error']}"
+            )
             raise HTTPException(status_code=400, detail=result["error"])
 
         # Return the success message
         return {"message": result["message"], "wallet": result.get("wallet")}
-    
+
     except Exception as e:
         logging.error(f"Exception in wallet creation route: {e}")
-        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"An error occurred: {str(e)}"
+        )
+
 
 async def check_wallet_exists(user_id: str):
     try:
@@ -169,22 +200,25 @@ async def delete_wallet(user_id: str):
         message = f"Error while deleting the wallet: {error}"
         logging.error(f"delete_wallet_by_user_id: {message}")
         raise HTTPException(status_code=500, detail=message)
-    
+
+
 async def recharge_wallet(user_id: str, recharge_amount: float):
-    recharge_amount=Decimal(recharge_amount)
+    recharge_amount = Decimal(recharge_amount)
     minimum_amount = await get_minimum_recharge_amount()
     # Check if the recharge amount is less than Rs. 100
     if recharge_amount < minimum_amount:
         raise HTTPException(
-            status_code=400, 
-            detail=f"Cannot recharge, minimum recharge amount is {minimum_amount}, please recharge with {minimum_amount} or more"
+            status_code=400,
+            detail=f"Cannot recharge, minimum recharge amount is {minimum_amount}, please recharge with {minimum_amount} or more",
         )
 
     try:
         # Check if the wallet exists for the user
         result = await check_wallet_exists(user_id)
         if not result["exists"]:
-            raise HTTPException(status_code=404, detail="No wallet data found for the user")
+            raise HTTPException(
+                status_code=404, detail="No wallet data found for the user"
+            )
 
         wallet = result["wallet"]
 
@@ -203,7 +237,7 @@ async def recharge_wallet(user_id: str, recharge_amount: float):
             balance_before=balance_before,
             recharge_amount=recharge_amount,
             balance_after=balance_after,
-            recharged_at=datetime.now()
+            recharged_at=datetime.now(),
         )
 
         # Log the transaction in the WalletTransactions table
@@ -214,24 +248,36 @@ async def recharge_wallet(user_id: str, recharge_amount: float):
             transaction_time=datetime.now(),
             amount=recharge_amount,
             balance_before=balance_before,
-            balance_after=balance_after
+            balance_after=balance_after,
         )
 
-        logging.info(f"Wallet for user {user_id} has been recharged successfully")
-        return {"message": "Wallet recharged successfully", "balance_before": balance_before, "balance_after": balance_after}
+        logging.info(
+            f"Wallet for user {user_id} has been recharged successfully"
+        )
+        return {
+            "message": "Wallet recharged successfully",
+            "balance_before": balance_before,
+            "balance_after": balance_after,
+        }
 
     except Exception as error:
         logging.error(f"Error recharging wallet: {error}")
-        raise HTTPException(status_code=500, detail=f"An error occurred while recharging the wallet: {error}")
-    
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred while recharging the wallet: {error}",
+        )
+
+
 async def edit_wallet(user_id: str, balance: float = None):
-    balance=Decimal(balance)
+    balance = Decimal(balance)
     minimum_amount = await get_minimum_recharge_amount()
     try:
         # Check if the wallet exists for the given user_id
         result = await check_wallet_exists(user_id)
         if not result["exists"]:
-            raise HTTPException(status_code=404, detail="No wallet data found for the user")
+            raise HTTPException(
+                status_code=404, detail="No wallet data found for the user"
+            )
 
         # Get the wallet data
         wallet = result["wallet"]
@@ -241,8 +287,8 @@ async def edit_wallet(user_id: str, balance: float = None):
         if balance is not None:
             if balance < minimum_amount:
                 raise HTTPException(
-                    status_code=400, 
-                    detail=f"Balance cannot be less than the minimum allowed amount of Rs. {minimum_amount}"
+                    status_code=400,
+                    detail=f"Balance cannot be less than the minimum allowed amount of Rs. {minimum_amount}",
                 )
 
             # Determine if this is a debit or credit operation
@@ -256,7 +302,9 @@ async def edit_wallet(user_id: str, balance: float = None):
                 amount_involved = credit_amount
             else:
                 # No change in balance, no need to update the database
-                return {"message": "No balance change detected, no update required"}
+                return {
+                    "message": "No balance change detected, no update required"
+                }
 
             # Update the wallet balance in the database
             wallet.balance = balance
@@ -270,36 +318,53 @@ async def edit_wallet(user_id: str, balance: float = None):
                 transaction_time=datetime.now(),
                 amount=amount_involved,
                 balance_before=current_balance,
-                balance_after=balance
+                balance_after=balance,
             )
-            transaction_type=transaction_type+"ed"
-            logging.info(f"Wallet for user {user_id} has been successfully {transaction_type}")
-            return {"message": f"Wallet updated successfully. {transaction_type} with {amount_involved}", "wallet_id": wallet.uid}
+            transaction_type = transaction_type + "ed"
+            logging.info(
+                f"Wallet for user {user_id} has been successfully {transaction_type}"
+            )
+            return {
+                "message": f"Wallet updated successfully. {transaction_type} with {amount_involved}",
+                "wallet_id": wallet.uid,
+            }
 
     except Exception as error:
         logging.error(f"Error updating wallet: {error}")
-        raise HTTPException(status_code=500, detail=f"An error occurred while updating the wallet: {error}")
-    
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred while updating the wallet: {error}",
+        )
+
+
 async def debit_wallet(user_id: str, debit_amount: float):
-    debit_amount=Decimal(debit_amount)
-    minimum_amount=await get_minimum_recharge_amount()
+    debit_amount = Decimal(debit_amount)
+    minimum_amount = await get_minimum_recharge_amount()
     try:
         # Check if the wallet exists for the given user_id
         result = await check_wallet_exists(user_id)
         if not result["exists"]:
-            raise HTTPException(status_code=404, detail="No wallet data found for the user")
+            raise HTTPException(
+                status_code=404, detail="No wallet data found for the user"
+            )
 
         # Get the wallet data
         wallet = result["wallet"]
 
         # Check if the debit amount is greater than the current balance
         if debit_amount > wallet.balance:
-            raise HTTPException(status_code=400, detail="Insufficient balance for this transaction")
+            raise HTTPException(
+                status_code=400,
+                detail="Insufficient balance for this transaction",
+            )
 
         # Check if the transaction would put the balance below the minimum allowed amount
         new_balance = wallet.balance - debit_amount
         if new_balance < minimum_amount:
-            raise HTTPException(status_code=400, detail="This transaction cannot proceed because it would put you below the minimum required wallet balance")
+            raise HTTPException(
+                status_code=400,
+                detail="This transaction cannot proceed because it would put you below the minimum required wallet balance",
+            )
 
         # Debit the wallet by reducing the balance
         balance_before = wallet.balance
@@ -314,16 +379,26 @@ async def debit_wallet(user_id: str, debit_amount: float):
             transaction_time=datetime.now(),
             amount=debit_amount,
             balance_before=balance_before,
-            balance_after=new_balance
+            balance_after=new_balance,
         )
 
-        logging.info(f"Wallet for user {user_id} has been debited successfully")
-        return {"message": "Wallet debited successfully", "balance_before": balance_before, "balance_after": new_balance}
+        logging.info(
+            f"Wallet for user {user_id} has been debited successfully"
+        )
+        return {
+            "message": "Wallet debited successfully",
+            "balance_before": balance_before,
+            "balance_after": new_balance,
+        }
 
     except Exception as error:
         logging.error(f"Error debiting wallet: {error}")
-        raise HTTPException(status_code=500, detail=f"An error occurred while debiting the wallet: {error}")
-    
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred while debiting the wallet: {error}",
+        )
+
+
 # Method to get wallet recharge history for a user or all users
 async def get_wallet_recharge_history(user_id: str):
     try:
@@ -334,14 +409,22 @@ async def get_wallet_recharge_history(user_id: str):
             # First, check if the wallet exists for the given user_id
             result = await check_wallet_exists(user_id)
             if not result["exists"]:
-                raise HTTPException(status_code=404, detail="No wallet data found for the user")
+                raise HTTPException(
+                    status_code=404, detail="No wallet data found for the user"
+                )
 
             # Fetch recharge history for the specific user_id
-            recharge_history = WalletRecharge.select().where(WalletRecharge.user_id == user_id).dicts()
+            recharge_history = (
+                WalletRecharge.select()
+                .where(WalletRecharge.user_id == user_id)
+                .dicts()
+            )
 
         # Check if any history exists
         if not recharge_history.exists():
-            raise HTTPException(status_code=404, detail="No recharge history found")
+            raise HTTPException(
+                status_code=404, detail="No recharge history found"
+            )
 
         # Convert the query result into a list of dictionaries
         recharge_history_list = list(recharge_history)
@@ -351,21 +434,34 @@ async def get_wallet_recharge_history(user_id: str):
 
     except Exception as error:
         logging.error(f"Error fetching recharge history: {error}")
-        raise HTTPException(status_code=500, detail=f"An error occurred while fetching recharge history: {error}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred while fetching recharge history: {error}",
+        )
+
 
 async def get_wallet_transaction_history(user_id: str):
     try:
         # First, check if the wallet exists for the given user_id
         result = await check_wallet_exists(user_id)
         if not result["exists"]:
-            raise HTTPException(status_code=404, detail="No wallet data found for the user")
+            raise HTTPException(
+                status_code=404, detail="No wallet data found for the user"
+            )
 
         # Fetch transaction history for the specific user_id
-        transaction_history = WalletTransactions.select().where(WalletTransactions.user_id == user_id).dicts()
+        transaction_history = (
+            WalletTransactions.select()
+            .where(WalletTransactions.user_id == user_id)
+            .dicts()
+        )
 
         # Check if any transaction history exists
         if not transaction_history.exists():
-            raise HTTPException(status_code=404, detail="No transaction history found for this user")
+            raise HTTPException(
+                status_code=404,
+                detail="No transaction history found for this user",
+            )
 
         # Convert the query result into a list of dictionaries
         transaction_history_list = list(transaction_history)
@@ -375,4 +471,7 @@ async def get_wallet_transaction_history(user_id: str):
 
     except Exception as error:
         logging.error(f"Error fetching transaction history: {error}")
-        raise HTTPException(status_code=500, detail=f"An error occurred while fetching transaction history: {error}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred while fetching transaction history: {error}",
+        )

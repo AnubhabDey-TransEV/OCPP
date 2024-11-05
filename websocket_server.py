@@ -49,7 +49,7 @@
 #         if not charge_point:
 #             logging.error(f"Charge point {charge_point_id} not found.")
 #             return {"error": "Charge point not found"}
-        
+
 #         method = getattr(charge_point, request_method, None)
 #         if method is None:
 #             logging.error(f"Request method {request_method} not found on ChargePoint {charge_point_id}.")

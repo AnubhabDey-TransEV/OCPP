@@ -18,10 +18,10 @@
 # def run_async(coroutine):
 #     """
 #     Run the given coroutine in the asyncio event loop running in another thread.
-    
+
 #     Parameters:
 #     coroutine (coroutine): The coroutine to run.
-    
+
 #     Returns:
 #     The result of the coroutine.
 #     """
@@ -318,12 +318,12 @@
 #     except Exception as e:
 #         logging.error(f"An error occurred: {e}")
 #         return jsonify({"error": f"An error occurred: {e}"}), 500
-    
+
 # @app.route("/status", methods=["POST"])
 # def get_charge_point_status():
 #     data = request.json
 #     charge_point_id = data.get('charge_point_id')
-    
+
 #     if charge_point_id == "all_online":
 #         all_online_statuses = {}
 #         for cp_id, charge_point in central_system.charge_points.items():

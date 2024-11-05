@@ -61,7 +61,7 @@
 #         "Update Firmware (Response)": kwargs.get("update_firmware_response", None),
 #         "Reset (Response)": kwargs.get("reset_response", None)
 #     }
-    
+
 #     return formatted_message
 
 # def jsonify_response(response):

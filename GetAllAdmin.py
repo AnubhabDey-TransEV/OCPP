@@ -1,11 +1,22 @@
 import requests
 import itertools
-from peewee import MySQLDatabase, Model, TextField, IntegerField, FloatField, BooleanField, DateTimeField, DateField
+from peewee import (
+    MySQLDatabase,
+    Model,
+    TextField,
+    IntegerField,
+    FloatField,
+    BooleanField,
+    DateTimeField,
+    DateField,
+)
 from playhouse.reflection import Introspector
 from datetime import datetime, date
 
 # Step 1: Fetch the JSON data from the API endpoint
-response = requests.get("https://evchargercmsbackend.onrender.com/admin/getalladmindata")
+response = requests.get(
+    "https://evchargercmsbackend.onrender.com/admin/getalladmindata"
+)
 data = response.json()
 
 # Step 2: Combine all keys from the JSON data
@@ -32,17 +43,25 @@ for key in all_keys:
             break
 
 # Step 4: Connect to the MySQL database
-db = MySQLDatabase('OCPP', user='ocpphandler', password='ocpp2024', host='localhost', port=3306)
+db = MySQLDatabase(
+    "OCPP",
+    user="ocpphandler",
+    password="ocpp2024",
+    host="localhost",
+    port=3306,
+)
+
 
 # Step 5: Dynamically create the Peewee model with table name Admin_Data
 class BaseModel(Model):
     class Meta:
         database = db
-        table_name = 'Admin_Data'
+        table_name = "Admin_Data"
+
 
 # Get existing columns in the database table
 introspector = Introspector.from_database(db)
-existing_columns = introspector.introspect('Admin_Data').columns
+existing_columns = introspector.introspect("Admin_Data").columns
 
 # Add fields dynamically, checking if they already exist
 for key, field_type in field_types.items():
@@ -57,14 +76,18 @@ BaseModel._meta.database = db
 if not BaseModel.table_exists():
     BaseModel.create_table()
 
+
 # Step 6: Function to convert values to correct types
 def convert_value(value):
     if isinstance(value, list) or isinstance(value, dict):
         return str(value)
     return value
 
+
 # Step 7: Insert parsed data into the database
 with db.atomic():
     for entry in data:
-        entry_converted = {key: convert_value(value) for key, value in entry.items()}
+        entry_converted = {
+            key: convert_value(value) for key, value in entry.items()
+        }
         BaseModel.create(**entry_converted)

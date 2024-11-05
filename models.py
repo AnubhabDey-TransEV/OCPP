@@ -1,4 +1,15 @@
-from peewee import Model, AutoField, CharField, DateTimeField, IntegerField, FloatField, UUIDField, TextField, DecimalField, ForeignKeyField
+from peewee import (
+    Model,
+    AutoField,
+    CharField,
+    DateTimeField,
+    IntegerField,
+    FloatField,
+    UUIDField,
+    TextField,
+    DecimalField,
+    ForeignKeyField,
+)
 import uuid
 from dbconn import get_database
 from datetime import datetime
@@ -6,27 +17,42 @@ from datetime import datetime
 # Get the database connection
 db = get_database()
 
+
 def getUUID():
     return str(uuid.uuid4())
+
 
 class BaseModel(Model):
     class Meta:
         database = db
 
+
 class NetworkAnalytics(Model):
-    event_type = CharField()  # 'connect', 'disconnect', 'request', or 'response'
-    ev_id = CharField(null=True)  # EV identifier for WebSocket connections, null for API events
+    event_type = (
+        CharField()
+    )  # 'connect', 'disconnect', 'request', or 'response'
+    ev_id = CharField(
+        null=True
+    )  # EV identifier for WebSocket connections, null for API events
     ip_address = CharField()  # IP address associated with the event
     ip_information = TextField()
-    endpoint = CharField()  # Charger ID for WebSocket, API client endpoint for requests, 'CMS' for responses
-    request_data = TextField(null=True)  # JSON or string format of request data
-    response_data = TextField(null=True)  # JSON or string format of response data
-    timestamp = DateTimeField(default=datetime.now)  # Date and time of the event
-
+    endpoint = (
+        CharField()
+    )  # Charger ID for WebSocket, API client endpoint for requests, 'CMS' for responses
+    request_data = TextField(
+        null=True
+    )  # JSON or string format of request data
+    response_data = TextField(
+        null=True
+    )  # JSON or string format of response data
+    timestamp = DateTimeField(
+        default=datetime.now
+    )  # Date and time of the event
 
     class Meta:
         database = db
-        table_name = 'network_analytics'
+        table_name = "network_analytics"
+
 
 class Logs(Model):
     id = AutoField()
@@ -39,24 +65,26 @@ class Logs(Model):
 
     class Meta:
         database = db
-        table_name = 'logs'
+        table_name = "logs"
+
 
 class Transaction(BaseModel):
-    uuiddb = CharField(default=getUUID)    
+    uuiddb = CharField(default=getUUID)
     charger_id = CharField()
     connector_id = IntegerField()
     meter_start = FloatField()
     meter_stop = FloatField()
-    total_consumption = FloatField()  # You can manually compute this in your code
+    total_consumption = (
+        FloatField()
+    )  # You can manually compute this in your code
     start_time = DateTimeField()
     stop_time = DateTimeField()
     id_tag = CharField()
 
     class Meta:
-        table_name = 'transactions'
-        indexes = (
-            (('charger_id', 'connector_id'), False),
-        )
+        table_name = "transactions"
+        indexes = ((("charger_id", "connector_id"), False),)
+
 
 class Reservation(BaseModel):
     uuiddb = CharField(default=getUUID)
@@ -71,7 +99,8 @@ class Reservation(BaseModel):
     status = CharField()  # Status can be 'Reserved' or 'Cancelled'
 
     class Meta:
-        table_name = 'reservations'
+        table_name = "reservations"
+
 
 class OCPPMessageCMS(BaseModel):
     uuiddb = CharField(default=getUUID)
@@ -83,7 +112,8 @@ class OCPPMessageCMS(BaseModel):
     timestamp = DateTimeField()
 
     class Meta:
-        table_name = 'CMS_to_Charger'
+        table_name = "CMS_to_Charger"
+
 
 class OCPPMessageCharger(BaseModel):
     uuiddb = CharField(default=getUUID)
@@ -95,7 +125,8 @@ class OCPPMessageCharger(BaseModel):
     timestamp = DateTimeField()
 
     class Meta:
-        table_name = 'Charger_to_CMS'
+        table_name = "Charger_to_CMS"
+
 
 class QRCodeData(BaseModel):
     uuiddb = CharField(default=getUUID)
@@ -104,9 +135,10 @@ class QRCodeData(BaseModel):
     image_path = CharField()  # Add this field
     filename = CharField()  # Add this field
     generation_date = DateTimeField()
-    
+
     class Meta:
-        table_name = 'qr_code_data'
+        table_name = "qr_code_data"
+
 
 class Analytics(BaseModel):
     uuiddb = CharField(default=getUUID)
@@ -117,11 +149,14 @@ class Analytics(BaseModel):
     total_transactions = IntegerField()
     total_electricity_used_kwh = FloatField()
     occupancy_rate_percentage = FloatField()
-    average_session_duration = CharField()  # Storing in a human-readable format
+    average_session_duration = (
+        CharField()
+    )  # Storing in a human-readable format
     peak_usage_times = CharField()  # Storing as a comma-separated string
 
     class Meta:
-        table_name = 'analytics'
+        table_name = "analytics"
+
 
 class Wallet(BaseModel):
     uid = CharField(unique=True)  # Wallet UID (for internal tracking)
@@ -129,7 +164,8 @@ class Wallet(BaseModel):
     balance = DecimalField(default=0.0)  # Wallet balance
 
     class Meta:
-        table_name = 'wallets'
+        table_name = "wallets"
+
 
 class WalletRecharge(BaseModel):
     user_id = CharField()
@@ -140,23 +176,41 @@ class WalletRecharge(BaseModel):
     recharged_at = DateTimeField(default=datetime.now)
 
     class Meta:
-        table_name = 'wallet_recharge'
+        table_name = "wallet_recharge"
+
 
 class WalletTransactions(BaseModel):
     user_id = CharField()  # The ID of the user involved in the transaction
-    wallet_id = ForeignKeyField(Wallet, backref='transactions')  # Foreign key to the wallet
+    wallet_id = ForeignKeyField(
+        Wallet, backref="transactions"
+    )  # Foreign key to the wallet
     transaction_type = CharField()  # Either 'credit' or 'debit'
-    transaction_time = DateTimeField(default=datetime.now)  # Timestamp of the transaction
+    transaction_time = DateTimeField(
+        default=datetime.now
+    )  # Timestamp of the transaction
     amount = FloatField()  # Amount involved in the transaction
     balance_before = FloatField()  # Balance before the transaction
     balance_after = FloatField()  # Balance after the transaction
 
     class Meta:
-        table_name = 'wallet_transactions'  # Define the table name
+        table_name = "wallet_transactions"  # Define the table name
+
 
 # Create the tables
 db.connect()
-db.create_tables([
-    Transaction, Reservation, OCPPMessageCMS, OCPPMessageCharger, 
-    QRCodeData, Analytics, Logs, Wallet, WalletRecharge, WalletTransactions, NetworkAnalytics
-], safe=True)
+db.create_tables(
+    [
+        Transaction,
+        Reservation,
+        OCPPMessageCMS,
+        OCPPMessageCharger,
+        QRCodeData,
+        Analytics,
+        Logs,
+        Wallet,
+        WalletRecharge,
+        WalletTransactions,
+        NetworkAnalytics,
+    ],
+    safe=True,
+)
