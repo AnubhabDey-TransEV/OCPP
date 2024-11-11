@@ -85,16 +85,20 @@ valkey_client = valkey.from_url(valkey_uri)
 
 async def get_ip_information(ip_address: str):
     try:
-        # Replace this URL with the actual IP lookup service API endpoint
-        response = requests.get(f"http://ip-api.com/json/{ip_address}")
+        # Define the headers with the latest Chrome User-Agent
+        headers = {"User-Agent": config("USER_AGENT")}
+
+        # Make the request with the User-Agent header
+        response = requests.get(
+            f"http://ip-api.com/json/{ip_address}", headers=headers
+        )
 
         if response.status_code == 200:
             # Return the full JSON response as the IP information
-            # Convert the JSON response to a string
-            return json.dumps(response.json())
+            return json.dumps(response.content.json())
     except Exception as e:
         print(f"Failed to retrieve IP information for {ip_address}: {e}")
-        return None
+        return None  # Return "Null" in case of failure
 
 
 class VerifyAPIKeyMiddleware(BaseHTTPMiddleware):
