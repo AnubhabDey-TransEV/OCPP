@@ -160,8 +160,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 class APITrackingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        # Skip tracking for WebSocket connections
-        if "sec-websocket-key" not in request.headers:
+        # Skip tracking for WebSocket connections and non-/api/ paths
+        if (
+            "sec-websocket-key" not in request.headers
+            and request.url.path.startswith("/api/")
+        ):
             # Capture request data and client IP
             ip_address = request.client.host
             endpoint = request.url.path
@@ -195,7 +198,7 @@ class APITrackingMiddleware(BaseHTTPMiddleware):
 
             return response
         else:
-            # If it's a WebSocket request, skip to the next middleware directly
+            # If it's a WebSocket request or not an /api/ path, skip tracking
             return await call_next(request)
 
 
