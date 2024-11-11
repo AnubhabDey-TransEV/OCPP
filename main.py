@@ -223,20 +223,20 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-middleware = [
-    app.add_middleware(VerifyAPIKeyMiddleware),
-    app.add_middleware(RateLimitMiddleware),
-    app.add_middleware(APITrackingMiddleware),
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    ),
-]
-
-app = FastAPI(middleware=middleware)
+app = FastAPI(
+    middleware=[
+        Middleware(VerifyAPIKeyMiddleware),
+        Middleware(RateLimitMiddleware),
+        Middleware(APITrackingMiddleware),
+        Middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        ),
+    ]
+)
 
 
 class WebSocketAdapter:
