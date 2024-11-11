@@ -21,7 +21,8 @@ from peewee import DoesNotExist
 from io import BytesIO
 import qrcode
 import uvicorn
-import uvloop
+
+# import uvloop
 import requests
 import json
 from decouple import config
@@ -67,7 +68,7 @@ from collections import defaultdict
 from datetime import timedelta
 
 
-asyncio.set_event_loop(uvloop.new_event_loop())
+# asyncio.set_event_loop(uvloop.new_event_loop())
 
 setup_logging()
 # logging.getLogger().setLevel(logging.DEBUG)
@@ -99,14 +100,18 @@ async def get_ip_information(ip_address: str):
 
 class VerifyAPIKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        if request.url.path.startswith("/api/"):
-            api_key = request.headers.get("x-api-key")
-            expected_api_key = config("API_KEY")
-            logging.info(
-                f"Received API Key: {api_key}, Expected API Key: {expected_api_key}"
-            )
-            if api_key != expected_api_key:
-                raise HTTPException(status_code=403, detail="Invalid API key")
+        # Skip API key check for WebSocket connections
+        if "sec-websocket-key" not in request.headers:
+            if request.url.path.startswith("/api/"):
+                api_key = request.headers.get("x-api-key")
+                expected_api_key = config("API_KEY")
+                logging.info(
+                    f"Received API Key: {api_key}, Expected API Key: {expected_api_key}"
+                )
+                if api_key != expected_api_key:
+                    raise HTTPException(
+                        status_code=403, detail="Invalid API key"
+                    )
         response = await call_next(request)
         return response
 
@@ -127,65 +132,71 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.lock = asyncio.Lock()  # Ensures safe access to `requests`
 
     async def dispatch(self, request: Request, call_next):
-        client_ip = request.client.host
-        current_time = datetime.now()
+        # Skip rate limiting for WebSocket connections
+        if "sec-websocket-key" not in request.headers:
+            client_ip = request.client.host
+            current_time = datetime.now()
 
-        async with self.lock:
-            # Filter out old requests outside the time window
-            self.requests[client_ip] = [
-                timestamp
-                for timestamp in self.requests[client_ip]
-                if current_time - timestamp < self.time_window
-            ]
+            async with self.lock:
+                # Filter out old requests outside the time window
+                self.requests[client_ip] = [
+                    timestamp
+                    for timestamp in self.requests[client_ip]
+                    if current_time - timestamp < self.time_window
+                ]
 
-            # Enforce rate limit
-            if len(self.requests[client_ip]) >= self.rate_limit:
-                return JSONResponse(
-                    status_code=429,
-                    content={"detail": "Too many requests"},
-                )
+                # Enforce rate limit
+                if len(self.requests[client_ip]) >= self.rate_limit:
+                    return JSONResponse(
+                        status_code=429,
+                        content={"detail": "Too many requests"},
+                    )
 
-            # Record the current request time
-            self.requests[client_ip].append(current_time)
+                # Record the current request time
+                self.requests[client_ip].append(current_time)
 
         return await call_next(request)
 
 
-# Middleware class for API request and response tracking
 class APITrackingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        # Capture request data and client IP
-        ip_address = request.client.host
-        endpoint = request.url.path
-        request_data = await request.body()
+        # Skip tracking for WebSocket connections
+        if "sec-websocket-key" not in request.headers:
+            # Capture request data and client IP
+            ip_address = request.client.host
+            endpoint = request.url.path
+            request_data = await request.body()
 
-        ip_info = await get_ip_information(ip_address)
+            ip_info = await get_ip_information(ip_address)
 
-        # Log the API request
-        NetworkAnalytics.create(
-            event_type="API Request",
-            ip_address=ip_address,
-            ip_information=ip_info,
-            endpoint=endpoint,
-            request_data=(
-                request_data.decode("utf-8") if request_data else None
-            ),
-            timestamp=datetime.now(),
-        )
+            # Log the API request
+            NetworkAnalytics.create(
+                event_type="API Request",
+                ip_address=ip_address,
+                ip_information=ip_info,
+                endpoint=endpoint,
+                request_data=(
+                    request_data.decode("utf-8") if request_data else None
+                ),
+                timestamp=datetime.now(),
+            )
 
-        # Process the request
-        response = await call_next(request)
+            # Process the request
+            response = await call_next(request)
 
-        # Capture and log the response data
-        NetworkAnalytics.create(
-            event_type="API Response",
-            ip_address=ip_address,
-            ip_information=ip_info,
-            endpoint="CMS",
-            timestamp=datetime.now(),
-        )
+            # Capture and log the response data
+            NetworkAnalytics.create(
+                event_type="API Response",
+                ip_address=ip_address,
+                ip_information=ip_info,
+                endpoint="CMS",
+                timestamp=datetime.now(),
+            )
 
-        return response
+            return response
+        else:
+            # If it's a WebSocket request, skip to the next middleware directly
+            return await call_next(request)
 
 
 async def refresh_cache():
@@ -223,20 +234,20 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-app = FastAPI(
-    middleware=[
-        Middleware(VerifyAPIKeyMiddleware),
-        Middleware(RateLimitMiddleware),
-        Middleware(APITrackingMiddleware),
-        Middleware(
-            CORSMiddleware,
-            allow_origins=["*"],
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        ),
-    ]
-)
+middleware = [
+    Middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    ),
+    Middleware(RateLimitMiddleware),
+    Middleware(VerifyAPIKeyMiddleware),
+    Middleware(APITrackingMiddleware),
+]
+
+app = FastAPI(middleware=middleware)
 
 
 class WebSocketAdapter:
@@ -2188,6 +2199,6 @@ async def get_transaction_history_route(request: UserIDRequest):
     return await get_wallet_transaction_history(request.user_id)
 
 
-# if __name__ == "__main__":
-#     port=int(config("F_SERVER_PORT"))
-#     uvicorn.run(app, host=config("F_SERVER_HOST"), port=port)
+if __name__ == "__main__":
+    port = int(config("F_SERVER_PORT"))
+    uvicorn.run(app, host=config("F_SERVER_HOST"), port=port)
