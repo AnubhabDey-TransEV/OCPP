@@ -13,6 +13,7 @@ from fastapi import (
 )
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, Response
 from pydantic import BaseModel
 from typing import Optional, Dict
@@ -36,6 +37,7 @@ from models import (
     OCPPMessageCharger as ChargerToCMS,
     OCPPMessageCMS as CMSToCharger,
     Transaction as Transactions,
+    NetworkAnalytics,
 )
 from Chargers_to_CMS_Parser import (
     parse_and_store_cancel_reservation_response,
@@ -61,6 +63,8 @@ from wallet_api_models import (
     DebitWalletRequest,
 )
 from playhouse.shortcuts import model_to_dict
+from collections import defaultdict
+from datetime import timedelta
 
 
 asyncio.set_event_loop(uvloop.new_event_loop())
@@ -79,18 +83,109 @@ valkey_uri = config("VALKEY_URI")
 valkey_client = valkey.from_url(valkey_uri)
 
 
-async def verify_api_key_middleware(request: Request, call_next):
+async def get_ip_information(ip_address: str):
+    try:
+        # Replace this URL with the actual IP lookup service API endpoint
+        response = requests.get(f"http://ip-api.com/json/{ip_address}")
 
-    if request.url.path.startswith("/api/"):
-        api_key = request.headers.get("x-api-key")
-        expected_api_key = config("API_KEY")
-        logging.info(
-            f"Received API Key: {api_key}, Expected API Key: {expected_api_key}"
+        if response.status_code == 200:
+            # Return the full JSON response as the IP information
+            # Convert the JSON response to a string
+            return json.dumps(response.json())
+    except Exception as e:
+        print(f"Failed to retrieve IP information for {ip_address}: {e}")
+        return None
+
+
+class VerifyAPIKeyMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path.startswith("/api/"):
+            api_key = request.headers.get("x-api-key")
+            expected_api_key = config("API_KEY")
+            logging.info(
+                f"Received API Key: {api_key}, Expected API Key: {expected_api_key}"
+            )
+            if api_key != expected_api_key:
+                raise HTTPException(status_code=403, detail="Invalid API key")
+        response = await call_next(request)
+        return response
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    def __init__(
+        self,
+        app: FastAPI,
+        rate_limit: int = int(config("RPS")),
+        time_window: int = int(config("TWS")),
+    ):
+        super().__init__(app)
+        self.rate_limit = rate_limit  # Max requests allowed
+        self.time_window = timedelta(
+            seconds=time_window
+        )  # Time window in seconds
+        self.requests = defaultdict(list)  # Tracks requests per IP
+        self.lock = asyncio.Lock()  # Ensures safe access to `requests`
+
+    async def dispatch(self, request: Request, call_next):
+        client_ip = request.client.host
+        current_time = datetime.now()
+
+        async with self.lock:
+            # Filter out old requests outside the time window
+            self.requests[client_ip] = [
+                timestamp
+                for timestamp in self.requests[client_ip]
+                if current_time - timestamp < self.time_window
+            ]
+
+            # Enforce rate limit
+            if len(self.requests[client_ip]) >= self.rate_limit:
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Too many requests"},
+                )
+
+            # Record the current request time
+            self.requests[client_ip].append(current_time)
+
+        return await call_next(request)
+
+
+# Middleware class for API request and response tracking
+class APITrackingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Capture request data and client IP
+        ip_address = request.client.host
+        endpoint = request.url.path
+        request_data = await request.body()
+
+        ip_info = await get_ip_information(ip_address)
+
+        # Log the API request
+        NetworkAnalytics.create(
+            event_type="API Request",
+            ip_address=ip_address,
+            ip_information=ip_info,
+            endpoint=endpoint,
+            request_data=(
+                request_data.decode("utf-8") if request_data else None
+            ),
+            timestamp=datetime.now(),
         )
-        if api_key != expected_api_key:
-            raise HTTPException(status_code=403, detail="Invalid API key")
-    response = await call_next(request)
-    return response
+
+        # Process the request
+        response = await call_next(request)
+
+        # Capture and log the response data
+        NetworkAnalytics.create(
+            event_type="API Response",
+            ip_address=ip_address,
+            ip_information=ip_info,
+            endpoint="CMS",
+            timestamp=datetime.now(),
+        )
+
+        return response
 
 
 async def refresh_cache():
@@ -129,13 +224,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 middleware = [
-    Middleware(
+    app.add_middleware(VerifyAPIKeyMiddleware),
+    app.add_middleware(RateLimitMiddleware),
+    app.add_middleware(APITrackingMiddleware),
+    app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-    )
+    ),
 ]
 
 app = FastAPI(middleware=middleware)
@@ -165,19 +263,41 @@ class CentralSystem:
     async def handle_charge_point(
         self, websocket: WebSocket, charge_point_id: str
     ):
+        # Capture charger IP address
+        ip_address = websocket.client.host
+        ip_info = await get_ip_information(ip_address)
+
+        # Log WebSocket connection event
+        NetworkAnalytics.create(
+            event_type="EVSE Connect",
+            ev_id=charge_point_id,
+            ip_address=ip_address,
+            ip_information=ip_info,
+            endpoint="EVSE",  # Charger ID as the endpoint for WebSocket
+            timestamp=datetime.now(),
+        )
+
         await websocket.accept()
 
         # Verify if the charger ID exists
         if not await self.verify_charger_id(charge_point_id):
             await websocket.close(code=1000)
+            # Log failed connection attempt due to invalid charger ID
+            NetworkAnalytics.create(
+                event_type="EVSE Disconnect",
+                ev_id=charge_point_id,
+                ip_address=ip_address,
+                ip_address_information=ip_info,
+                endpoint="EVSE",
+                response_data="Charger ID verification failed",
+                timestamp=datetime.now(),
+            )
             return
 
         logging.info(f"Charge point {charge_point_id} connected.")
 
         # Store the WebSocket connection in Valkey with the charge_point_id as the key
-        valkey_client.set(
-            f"active_connections:{charge_point_id}", os.getpid()
-        )  # Store worker/process ID with charge_point_id
+        valkey_client.set(f"active_connections:{charge_point_id}", os.getpid())
 
         # Add the charge_point_id to self.active_connections
         self.active_connections[charge_point_id] = websocket
@@ -196,11 +316,10 @@ class CentralSystem:
             start_task = asyncio.create_task(charge_point.start())
 
             # Wait for a brief moment to ensure the start method has begun
-            await asyncio.sleep(5)  # Adjust the sleep time as necessary
+            await asyncio.sleep(5)
 
-            # Now send the ChangeConfiguration request (e.g., changing heartbeat interval)
+            # Send configuration change requests
             await self.send_heartbeat_interval_change(charge_point_id)
-
             await self.send_sampled_metervalues_interval_change(
                 charge_point_id
             )
@@ -209,35 +328,44 @@ class CentralSystem:
             await start_task
 
         except WebSocketDisconnect:
-            # Handle WebSocket disconnect: remove from Valkey, self.active_connections, and local memory
+            # Handle WebSocket disconnect: cleanup Valkey, self.active_connections, and local memory
             logging.info(f"Charge point {charge_point_id} disconnected.")
-            valkey_client.delete(
-                f"active_connections:{charge_point_id}"
-            )  # Remove from Valkey
-            self.active_connections.pop(
-                charge_point_id, None
-            )  # Remove from self.active_connections
-            self.charge_points[charge_point_id].online = (
-                False  # Mark charger as offline
-            )
+            valkey_client.delete(f"active_connections:{charge_point_id}")
+            self.active_connections.pop(charge_point_id, None)
+            self.charge_points[charge_point_id].online = False
             await self.notify_frontend(charge_point_id, online=False)
 
+            # Log WebSocket disconnection event
+            NetworkAnalytics.create(
+                event_type="EVSE Disconnect",
+                ev_id=charge_point_id,
+                ip_address=ip_address,
+                ip_information=ip_info,
+                endpoint="EVSE",
+                timestamp=datetime.now(),
+            )
+
         except Exception as e:
-            # Handle any other exceptions, cleanup Valkey and active connections
+            # Handle any other exceptions, cleanup, and close the WebSocket connection
             logging.error(
                 f"Error occurred while handling charge point {charge_point_id}: {e}"
             )
-            valkey_client.delete(
-                f"active_connections:{charge_point_id}"
-            )  # Remove from Valkey
-            self.active_connections.pop(
-                charge_point_id, None
-            )  # Remove from self.active_connections
-            self.charge_points[charge_point_id].online = (
-                False  # Mark charger as offline
-            )
+            valkey_client.delete(f"active_connections:{charge_point_id}")
+            self.active_connections.pop(charge_point_id, None)
+            self.charge_points[charge_point_id].online = False
             await self.notify_frontend(charge_point_id, online=False)
-            await websocket.close()  # Close the WebSocket connection
+            await websocket.close()
+
+            # Log error event with the exception details
+            NetworkAnalytics.create(
+                event_type="EVSE Error (Not Connected)",
+                ev_id=charge_point_id,
+                ip_address=ip_address,
+                ip_information=ip_info,
+                endpoint="EVSE",
+                response_data=f"Error: {e}",
+                timestamp=datetime.now(),
+            )
 
     async def handle_frontend_websocket(self, websocket: WebSocket, uid: str):
         await websocket.accept()
@@ -2060,6 +2188,6 @@ async def get_transaction_history_route(request: UserIDRequest):
     return await get_wallet_transaction_history(request.user_id)
 
 
-if __name__ == "__main__":
-    port = int(config("F_SERVER_PORT"))
-    uvicorn.run(app, host=config("F_SERVER_HOST"), port=port)
+# if __name__ == "__main__":
+#     port=int(config("F_SERVER_PORT"))
+#     uvicorn.run(app, host=config("F_SERVER_HOST"), port=port)
