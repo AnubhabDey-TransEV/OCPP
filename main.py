@@ -22,7 +22,7 @@ from io import BytesIO
 import qrcode
 import uvicorn
 
-# import uvloop
+import uvloop
 import requests
 import json
 from decouple import config
@@ -68,7 +68,7 @@ from collections import defaultdict
 from datetime import timedelta
 
 
-# asyncio.set_event_loop(uvloop.new_event_loop())
+asyncio.set_event_loop(uvloop.new_event_loop())
 
 setup_logging()
 # logging.getLogger().setLevel(logging.DEBUG)
@@ -2199,6 +2199,6 @@ async def get_transaction_history_route(request: UserIDRequest):
     return await get_wallet_transaction_history(request.user_id)
 
 
-if __name__ == "__main__":
-    port = int(config("F_SERVER_PORT"))
-    uvicorn.run(app, host=config("F_SERVER_HOST"), port=port)
+# if __name__ == "__main__":
+#     port = int(config("F_SERVER_PORT"))
+#     uvicorn.run(app, host=config("F_SERVER_HOST"), port=port)
