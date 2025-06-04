@@ -2,7 +2,6 @@ from decouple import config
 from playhouse.pool import (
     PooledMySQLDatabase,
 )  # Use PooledMySQLDatabase for connection pooling
-import ssl
 
 # Load database configuration from environment variables
 DB_NAME = config("DB_NAME")
@@ -18,7 +17,7 @@ db = PooledMySQLDatabase(
     password=DB_PASSWORD,
     host=DB_HOST,
     port=DB_PORT,
-    max_connections=100,  # Set up to 52 concurrent connections
+    max_connections=16,  # Set up to 52 concurrent connections
     stale_timeout=300,  # Recycle connections after 5 minutes of inactivity
     timeout=30,  # Optional: Timeout for connection attempts
 )

@@ -1,74 +1,71 @@
 import asyncio
+import json
 import logging
-from datetime import datetime, timezone as dt_timezone
+import os
+from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import Dict, Optional
+
+import requests
+
+# import uvloop
+import uvicorn
+import valkey
+from decouple import config
 from fastapi import (
     FastAPI,
     HTTPException,
+    Request,
     WebSocket,
     WebSocketDisconnect,
-    Header,
-    Depends,
-    Request,
-    Query,
 )
-from starlette.middleware import Middleware
-from starlette.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse, Response
-from pydantic import BaseModel
-from typing import Optional, Dict
+from fastapi.responses import JSONResponse
 from peewee import DoesNotExist
-from io import BytesIO
-import qrcode
-import uvicorn
+from playhouse.shortcuts import model_to_dict
+from pydantic import BaseModel
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.cors import CORSMiddleware
 
-import uvloop
-import requests
-import json
-from decouple import config
-import os
-from OCPP_Requests import (
-    ChargePoint,
-)  # Assuming this is where ChargePoint is implemented
-from models import (
-    Reservation,
-    QRCodeData,
-    db,
-    Analytics,
-    OCPPMessageCharger as ChargerToCMS,
-    OCPPMessageCMS as CMSToCharger,
-    Transaction as Transactions,
-    NetworkAnalytics,
-)
 from Chargers_to_CMS_Parser import (
     parse_and_store_cancel_reservation_response,
 )  # Assuming this handles responses
 from loggingHandler import setup_logging
-from cachetools import TTLCache, cached
-import time
-import valkey
-from contextlib import asynccontextmanager
+from models import (
+    Analytics,
+    NetworkAnalytics,
+    Reservation,
+    db,
+)
+from models import (
+    OCPPMessageCharger as ChargerToCMS,
+)
+from models import (
+    OCPPMessageCMS as CMSToCharger,
+)
+from models import (
+    Transaction as Transactions,
+)
+from OCPP_Requests import (
+    ChargePoint,
+)  # Assuming this is where ChargePoint is implemented
+from wallet_api_models import (
+    DebitWalletRequest,
+    EditWalletRequest,
+    RechargeWalletRequest,
+    UserIDRequest,
+)
 from wallet_methods import (
     create_wallet_route,
-    delete_wallet,
-    recharge_wallet,
-    edit_wallet,
     debit_wallet,
+    delete_wallet,
+    edit_wallet,
     get_wallet_recharge_history,
     get_wallet_transaction_history,
+    recharge_wallet,
 )
-from wallet_api_models import (
-    UserIDRequest,
-    RechargeWalletRequest,
-    EditWalletRequest,
-    DebitWalletRequest,
-)
-from playhouse.shortcuts import model_to_dict
-from collections import defaultdict
-from datetime import timedelta
 
-
-asyncio.set_event_loop(uvloop.new_event_loop())
+# asyncio.set_event_loop(uvloop.new_event_loop())
 
 setup_logging()
 # logging.getLogger().setLevel(logging.DEBUG)
@@ -109,61 +106,56 @@ class VerifyAPIKeyMiddleware(BaseHTTPMiddleware):
                     f"Received API Key: {api_key}, Expected API Key: {expected_api_key}"
                 )
                 if api_key != expected_api_key:
-                    raise HTTPException(
-                        status_code=403, detail="Invalid API key"
-                    )
+                    raise HTTPException(status_code=403, detail="Invalid API key")
         response = await call_next(request)
         return response
 
 
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(
-        self,
-        app: FastAPI,
-        rate_limit: int = int(config("RPS")),
-        time_window: int = int(config("TWS")),
-    ):
-        super().__init__(app)
-        self.rate_limit = rate_limit  # Max requests allowed
-        self.time_window = timedelta(
-            seconds=time_window
-        )  # Time window in seconds
-        self.requests = defaultdict(list)  # Tracks requests per IP
-        self.lock = asyncio.Lock()  # Ensures safe access to `requests`
+# class RateLimitMiddleware(BaseHTTPMiddleware):
+#     def __init__(
+#         self,
+#         app: FastAPI,
+#         rate_limit: int = int(config("RPS")),
+#         time_window: int = int(config("TWS")),
+#     ):
+#         super().__init__(app)
+#         self.rate_limit = rate_limit  # Max requests allowed
+#         self.time_window = timedelta(seconds=time_window)  # Time window in seconds
+#         self.requests = defaultdict(list)  # Tracks requests per IP
+#         self.lock = asyncio.Lock()  # Ensures safe access to `requests`
 
-    async def dispatch(self, request: Request, call_next):
-        # Skip rate limiting for WebSocket connections
-        if "sec-websocket-key" not in request.headers:
-            client_ip = request.client.host
-            current_time = datetime.now()
+# async def dispatch(self, request: Request, call_next):
+#     # Skip rate limiting for WebSocket connections
+#     if "sec-websocket-key" not in request.headers:
+#         client_ip = request.client.host
+#         current_time = datetime.now()
 
-            async with self.lock:
-                # Filter out old requests outside the time window
-                self.requests[client_ip] = [
-                    timestamp
-                    for timestamp in self.requests[client_ip]
-                    if current_time - timestamp < self.time_window
-                ]
+#         async with self.lock:
+#             # Filter out old requests outside the time window
+#             self.requests[client_ip] = [
+#                 timestamp
+#                 for timestamp in self.requests[client_ip]
+#                 if current_time - timestamp < self.time_window
+#             ]
 
-                # Enforce rate limit
-                if len(self.requests[client_ip]) >= self.rate_limit:
-                    return JSONResponse(
-                        status_code=429,
-                        content={"detail": "Too many requests"},
-                    )
+#             # Enforce rate limit
+#             if len(self.requests[client_ip]) >= self.rate_limit:
+#                 return JSONResponse(
+#                     status_code=429,
+#                     content={"detail": "Too many requests"},
+#                 )
 
-                # Record the current request time
-                self.requests[client_ip].append(current_time)
+#             # Record the current request time
+#             self.requests[client_ip].append(current_time)
 
-        return await call_next(request)
+#     return await call_next(request)
 
 
 class APITrackingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Skip tracking for WebSocket connections and non-/api/ paths
-        if (
-            "sec-websocket-key" not in request.headers
-            and request.url.path.startswith("/api/")
+        if "sec-websocket-key" not in request.headers and request.url.path.startswith(
+            "/api/"
         ):
             # Capture request data and client IP
             ip_address = request.client.host
@@ -178,9 +170,7 @@ class APITrackingMiddleware(BaseHTTPMiddleware):
                 ip_address=ip_address,
                 ip_information=ip_info,
                 endpoint=endpoint,
-                request_data=(
-                    request_data.decode("utf-8") if request_data else None
-                ),
+                request_data=(request_data.decode("utf-8") if request_data else None),
                 timestamp=datetime.now(),
             )
 
@@ -227,9 +217,7 @@ async def lifespan(app: FastAPI):
     yield  # The app runs while it yields here
     # Shutdown actions
     try:
-        valkey_client.delete(
-            CHARGER_DATA_KEY
-        )  # Cache cleanup logic at shutdown
+        valkey_client.delete(CHARGER_DATA_KEY)  # Cache cleanup logic at shutdown
         print("Shutdown: Cache cleared.")
     except Exception as e:
         print(f"Failed to clear cache on shutdown: {e}")
@@ -245,7 +233,6 @@ middleware = [
         allow_methods=["*"],
         allow_headers=["*"],
     ),
-    Middleware(RateLimitMiddleware),
     Middleware(VerifyAPIKeyMiddleware),
     Middleware(APITrackingMiddleware),
 ]
@@ -273,10 +260,9 @@ class CentralSystem:
         self.active_connections = {}
         self.verification_failures = {}
         self.frontend_connections = {}
+        self.pending_start_transactions = {}
 
-    async def handle_charge_point(
-        self, websocket: WebSocket, charge_point_id: str
-    ):
+    async def handle_charge_point(self, websocket: WebSocket, charge_point_id: str):
         # Capture charger IP address
         ip_address = websocket.client.host
         ip_info = await get_ip_information(ip_address)
@@ -334,9 +320,7 @@ class CentralSystem:
 
             # Send configuration change requests
             await self.send_heartbeat_interval_change(charge_point_id)
-            await self.send_sampled_metervalues_interval_change(
-                charge_point_id
-            )
+            await self.send_sampled_metervalues_interval_change(charge_point_id)
 
             # Await the completion of the start method
             await start_task
@@ -414,9 +398,7 @@ class CentralSystem:
                     del self.frontend_connections[uid]
 
         except Exception as e:
-            logging.error(
-                f"Error handling frontend WebSocket for charger {uid}: {e}"
-            )
+            logging.error(f"Error handling frontend WebSocket for charger {uid}: {e}")
 
             # Ensure the WebSocket is properly removed in case of an error
             if (
@@ -447,9 +429,7 @@ class CentralSystem:
 
     async def send_heartbeat_interval_change(self, charge_point_id: str):
         try:
-            logging.info(
-                f"Sending HeartbeatInterval change to {charge_point_id}"
-            )
+            logging.info(f"Sending HeartbeatInterval change to {charge_point_id}")
             response = await self.send_request(
                 charge_point_id=charge_point_id,
                 request_method="change_configuration",
@@ -467,13 +447,9 @@ class CentralSystem:
                 )
 
         except Exception as e:
-            logging.error(
-                f"Exception while sending HeartbeatInterval change: {e}"
-            )
+            logging.error(f"Exception while sending HeartbeatInterval change: {e}")
 
-    async def send_sampled_metervalues_interval_change(
-        self, charge_point_id: str
-    ):
+    async def send_sampled_metervalues_interval_change(self, charge_point_id: str):
         try:
             logging.info(
                 f"Sending SampledMeterValueInterval change to {charge_point_id}"
@@ -606,9 +582,7 @@ class CentralSystem:
                         f"Closed WebSocket connection for charger {charge_point_id}."
                     )
                 except Exception as e:
-                    logging.error(
-                        f"Error closing WebSocket for {charge_point_id}: {e}"
-                    )
+                    logging.error(f"Error closing WebSocket for {charge_point_id}: {e}")
 
     async def verify_charger_id(self, charge_point_id: str) -> bool:
         """
@@ -635,7 +609,7 @@ class CentralSystem:
             )
 
             # If verification fails 3 times, force cache update
-            if self.verification_failures[charge_point_id] >= 3:
+            if self.verification_failures[charge_point_id] >= 1:
                 logging.info(
                     f"Verification failed 3 times for {charge_point_id}, forcing cache update."
                 )
@@ -651,9 +625,7 @@ class CentralSystem:
 
         return True
 
-    async def send_request(
-        self, charge_point_id, request_method, *args, **kwargs
-    ):
+    async def send_request(self, charge_point_id, request_method, *args, **kwargs):
         charge_point = self.charge_points.get(charge_point_id)
         if not charge_point:
             logging.error(f"Charge point {charge_point_id} not found.")
@@ -680,9 +652,7 @@ class CentralSystem:
 
     async def cancel_reservation(self, charge_point_id, reservation_id):
         try:
-            reservation = Reservation.get(
-                Reservation.reservation_id == reservation_id
-            )
+            reservation = Reservation.get(Reservation.reservation_id == reservation_id)
         except DoesNotExist:
             logging.info(f"No reservation found with ID {reservation_id}")
             return {"error": "Reservation not found"}
@@ -724,9 +694,7 @@ class CentralSystem:
 
         return response
 
-    async def fetch_latest_charger_to_cms_message(
-        self, charge_point_id, message_type
-    ):
+    async def fetch_latest_charger_to_cms_message(self, charge_point_id, message_type):
         """
         Fetch the latest message from the charger-to-CMS table for the given charge point and message type.
         Return the whole entry as JSON, including any dynamic fields.
@@ -758,9 +726,7 @@ class CentralSystem:
             # If there is a payload field and it's JSON, deserialize it
             if "payload" in message_data and message_data["payload"]:
                 try:
-                    message_data["payload"] = json.loads(
-                        message_data["payload"]
-                    )
+                    message_data["payload"] = json.loads(message_data["payload"])
                 except json.JSONDecodeError:
                     # If it's not valid JSON, leave it as-is
                     pass
@@ -793,9 +759,7 @@ async def websocket_with_serialnumber(
 
 # WebSocket route for connections with only charger_id
 @app.websocket("/{charger_id}")
-async def websocket_without_serialnumber(
-    websocket: WebSocket, charger_id: str
-):
+async def websocket_without_serialnumber(websocket: WebSocket, charger_id: str):
     logging.info(f"Charger {charger_id} is connecting without serial number.")
     await central_system.handle_charge_point(websocket, charger_id)
 
@@ -894,9 +858,7 @@ class ChargerToCMSQueryRequest(BaseModel):
     filters: Optional[Dict[str, str]] = (
         None  # Optional dictionary of column name and value pairs for filtering
     )
-    limit: Optional[str] = (
-        None  # Optional limit parameter in the format '1-100'
-    )
+    limit: Optional[str] = None  # Optional limit parameter in the format '1-100'
     start_time: Optional[datetime] = None  # Optional start time for filtering
     end_time: Optional[datetime] = None  # Optional end time for filtering
 
@@ -906,9 +868,7 @@ class CMSToChargerQueryRequest(BaseModel):
     filters: Optional[Dict[str, str]] = (
         None  # Optional dictionary of column name and value pairs for filtering
     )
-    limit: Optional[str] = (
-        None  # Optional limit parameter in the format '1-100'
-    )
+    limit: Optional[str] = None  # Optional limit parameter in the format '1-100'
     start_time: Optional[datetime] = None  # Optional start time for filtering
     end_time: Optional[datetime] = None  # Optional end time for filtering
 
@@ -917,9 +877,7 @@ class ChargerAnalyticsRequest(BaseModel):
     start_time: Optional[datetime] = (
         None  # Optional start time for the analytics period
     )
-    end_time: Optional[datetime] = (
-        None  # Optional end time for the analytics period
-    )
+    end_time: Optional[datetime] = None  # Optional end time for the analytics period
     charger_id: Optional[str] = None  # Optional filter by charger_id
     include_charger_ids: Optional[bool] = (
         False  # Whether to include the list of unique charger IDs
@@ -946,7 +904,6 @@ async def options_change_availability():
 
 @app.post("/api/change_availability")
 async def change_availability(request: ChangeAvailabilityRequest):
-
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -976,7 +933,6 @@ async def options_start_transaction():
 
 @app.post("/api/start_transaction")
 async def start_transaction(request: StartTransactionRequest):
-
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -1006,7 +962,6 @@ async def options_stop_transaction():
 
 @app.post("/api/stop_transaction")
 async def stop_transaction(request: StopTransactionRequest):
-
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -1035,7 +990,6 @@ async def options_change_configuration():
 
 @app.post("/api/change_configuration")
 async def change_configuration(request: ChangeConfigurationRequest):
-
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -1065,7 +1019,6 @@ async def options_clear_cache():
 
 @app.post("/api/clear_cache")
 async def clear_cache(request: GetConfigurationRequest):
-
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -1092,7 +1045,6 @@ async def options_unlock_connector():
 
 @app.post("/api/unlock_connector")
 async def unlock_connector(request: UnlockConnectorRequest):
-
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -1121,7 +1073,6 @@ async def options_get_diagnostics():
 
 @app.post("/api/get_diagnostics")
 async def get_diagnostics(request: GetDiagnosticsRequest):
-
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -1154,7 +1105,6 @@ async def options_update_firmware():
 
 @app.post("/api/update_firmware")
 async def update_firmware(request: UpdateFirmwareRequest):
-
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -1186,7 +1136,6 @@ async def options_reset():
 
 @app.post("/api/reset")
 async def reset(request: ResetRequest):
-
     # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
 
     # Form the complete charge_point_id
@@ -1218,7 +1167,6 @@ async def options_get_configuration():
 
 @app.post("/api/get_configuration")
 async def get_configuration(request: GetConfigurationRequest):
-
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -1245,7 +1193,6 @@ async def options_status():
 
 @app.post("/api/status")
 async def get_charge_point_status(request: StatusRequest):
-
     # Fetch the latest charger data from cache or API
     charger_data = await central_system.get_charger_data()
 
@@ -1274,9 +1221,7 @@ async def get_charge_point_status(request: StatusRequest):
                 charge_point.online and cp_id in active_chargers
             ):  # Only show chargers still present in the API/cache
                 online_status = (
-                    "Online (with error)"
-                    if charge_point.has_error
-                    else "Online"
+                    "Online (with error)" if charge_point.has_error else "Online"
                 )
                 connectors = charge_point.state["connectors"]
                 connectors_status = {}
@@ -1296,9 +1241,7 @@ async def get_charge_point_status(request: StatusRequest):
 
                     if next_reservation:
                         next_reservation_info = {
-                            "reservation_id": next_reservation[
-                                "reservation_id"
-                            ],
+                            "reservation_id": next_reservation["reservation_id"],
                             "connector_id": next_reservation["connector_id"],
                             "from_time": next_reservation["from_time"],
                             "to_time": next_reservation["to_time"],
@@ -1308,16 +1251,12 @@ async def get_charge_point_status(request: StatusRequest):
 
                     connectors_status[conn_id] = {
                         "status": conn_state["status"],
-                        "latest_meter_value": conn_state.get(
-                            "last_meter_value"
-                        ),
+                        "latest_meter_value": conn_state.get("last_meter_value"),
                         "latest_transaction_consumption_kwh": conn_state.get(
                             "last_transaction_consumption_kwh", 0
                         ),
                         "error_code": conn_state.get("error_code", "NoError"),
-                        "latest_transaction_id": conn_state.get(
-                            "transaction_id"
-                        ),
+                        "latest_transaction_id": conn_state.get("transaction_id"),
                         "next_reservation": next_reservation_info,
                     }
 
@@ -1368,9 +1307,7 @@ async def get_charge_point_status(request: StatusRequest):
 
                     if next_reservation:
                         next_reservation_info = {
-                            "reservation_id": next_reservation[
-                                "reservation_id"
-                            ],
+                            "reservation_id": next_reservation["reservation_id"],
                             "connector_id": next_reservation["connector_id"],
                             "from_time": next_reservation["from_time"],
                             "to_time": next_reservation["to_time"],
@@ -1407,15 +1344,11 @@ async def get_charge_point_status(request: StatusRequest):
                     }
 
             all_statuses[charger_id] = {
-                "status": (
-                    charge_point.state["status"] if charge_point else "Offline"
-                ),
+                "status": (charge_point.state["status"] if charge_point else "Offline"),
                 "connectors": connectors_status,
                 "online": online_status,
                 "last_message_received_time": (
-                    charge_point.last_message_time.isoformat()
-                    if charge_point
-                    else None
+                    charge_point.last_message_time.isoformat() if charge_point else None
                 ),
             }
 
@@ -1425,14 +1358,14 @@ async def get_charge_point_status(request: StatusRequest):
     if charge_point_id:
         charge_point = central_system.charge_points.get(charge_point_id)
         if not charge_point:
-            raise HTTPException(
-                status_code=404, detail="Charge point not found"
-            )
+            raise HTTPException(status_code=404, detail="Charge point not found")
 
         online_status = (
             "Online (with error)"
             if charge_point.online and charge_point.has_error
-            else "Online" if charge_point.online else "Offline"
+            else "Online"
+            if charge_point.online
+            else "Offline"
         )
         connectors = charge_point.state["connectors"]
         connectors_status = {}
@@ -1483,14 +1416,14 @@ async def get_charge_point_status(request: StatusRequest):
     if charge_point_id and charge_point_id != "all":
         charge_point = central_system.charge_points.get(charge_point_id)
         if not charge_point:
-            raise HTTPException(
-                status_code=404, detail="Charge point not found"
-            )
+            raise HTTPException(status_code=404, detail="Charge point not found")
 
         online_status = (
             "Online (with error)"
             if charge_point.online and charge_point.has_error
-            else "Online" if charge_point.online else "Offline"
+            else "Online"
+            if charge_point.online
+            else "Offline"
         )
         connectors = charge_point.state["connectors"]
         connectors_status = {}
@@ -1554,7 +1487,6 @@ async def options_trigger_message():
 
 @app.post("/api/trigger_message")
 async def trigger_message(request: TriggerMessageRequest):
-
     charge_point_id = request.uid
     requested_message = (
         request.requested_message
@@ -1571,9 +1503,7 @@ async def trigger_message(request: TriggerMessageRequest):
     if hasattr(response, "status"):
         status = response.status
     else:
-        raise HTTPException(
-            status_code=500, detail="Failed to trigger message"
-        )
+        raise HTTPException(status_code=500, detail="Failed to trigger message")
 
     await asyncio.sleep(6)
 
@@ -1601,7 +1531,6 @@ async def options_reserve_now():
 
 @app.post("/api/reserve_now")
 async def reserve_now(request: ReserveNowRequest):
-
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -1633,7 +1562,6 @@ async def options_cancel_reservation():
 
 @app.post("/api/cancel_reservation")
 async def cancel_reservation(request: CancelReservationRequest):
-
     charge_point_id = request.uid
 
     response = await central_system.cancel_reservation(
@@ -1681,11 +1609,7 @@ async def query_charger_to_cms(request: ChargerToCMSQueryRequest):
 
     if request.limit:
         start, end = map(int, request.limit.split("-"))
-        query = (
-            query.order_by(ChargerToCMS.id)
-            .limit(end - start + 1)
-            .offset(start - 1)
-        )
+        query = query.order_by(ChargerToCMS.id).limit(end - start + 1).offset(start - 1)
     else:
         query = query.order_by(ChargerToCMS.id)
 
@@ -1730,11 +1654,7 @@ async def query_cms_to_charger(request: CMSToChargerQueryRequest):
 
     if request.limit:
         start, end = map(int, request.limit.split("-"))
-        query = (
-            query.order_by(CMSToCharger.id)
-            .limit(end - start + 1)
-            .offset(start - 1)
-        )
+        query = query.order_by(CMSToCharger.id).limit(end - start + 1).offset(start - 1)
     else:
         query = query.order_by(CMSToCharger.id)
 
@@ -1779,11 +1699,7 @@ async def query_transactions(request: ChargerToCMSQueryRequest):
 
     if request.limit:
         start, end = map(int, request.limit.split("-"))
-        query = (
-            query.order_by(Transactions.id)
-            .limit(end - start + 1)
-            .offset(start - 1)
-        )
+        query = query.order_by(Transactions.id).limit(end - start + 1).offset(start - 1)
     else:
         query = query.order_by(Transactions.id)
 
@@ -1828,11 +1744,7 @@ async def query_reservations(request: ChargerToCMSQueryRequest):
 
     if request.limit:
         start, end = map(int, request.limit.split("-"))
-        query = (
-            query.order_by(Reservation.id)
-            .limit(end - start + 1)
-            .offset(start - 1)
-        )
+        query = query.order_by(Reservation.id).limit(end - start + 1).offset(start - 1)
     else:
         query = query.order_by(Reservation.id)
 
@@ -1863,9 +1775,8 @@ def format_duration(seconds):
 
 
 from datetime import datetime
-from fastapi import HTTPException
-from playhouse.shortcuts import model_to_dict
-from peewee import fn, SQL
+
+from peewee import SQL, fn
 
 
 @app.post("/api/charger_analytics")
@@ -1918,9 +1829,7 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
         )
 
         if response.status_code != 200:
-            return {
-                "error": "Failed to fetch user charger data from external API"
-            }
+            return {"error": "Failed to fetch user charger data from external API"}
 
         user_charger_data = response.json().get("user_chargerunit_details", [])
         charger_ids = [charger["uid"] for charger in user_charger_data]
@@ -1940,9 +1849,7 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
     # Step 2: Calculate the uptime for each charger in the list
     for charger_id in charger_ids:
         uptime_query = (
-            ChargerToCMS.select(
-                ChargerToCMS.charger_id, ChargerToCMS.timestamp
-            )
+            ChargerToCMS.select(ChargerToCMS.charger_id, ChargerToCMS.timestamp)
             .where(
                 (ChargerToCMS.timestamp.between(start_time, end_time))
                 & (ChargerToCMS.charger_id == charger_id)
@@ -1968,9 +1875,7 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
         # Initialize for each charger, ensuring no stale data is carried over
         charger_uptime_data = {
             "total_uptime_seconds": 0,
-            "total_possible_uptime_seconds": (
-                end_time - start_time
-            ).total_seconds(),
+            "total_possible_uptime_seconds": (end_time - start_time).total_seconds(),
             "total_time_occupied_seconds": 0,  # Initialize to 0
             "session_durations": [],
             "peak_usage_times": [0] * 24,  # 24-hour time slots
@@ -1986,15 +1891,11 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
                 first_message = timestamp
 
             if previous_timestamp:
-                time_difference = (
-                    timestamp - previous_timestamp
-                ).total_seconds()
+                time_difference = (timestamp - previous_timestamp).total_seconds()
 
                 if time_difference <= 30:
                     # If the time difference is 30 seconds or less, accumulate the uptime
-                    charger_uptime_data[
-                        "total_uptime_seconds"
-                    ] += time_difference
+                    charger_uptime_data["total_uptime_seconds"] += time_difference
                 else:
                     # Charger was offline for more than 30 seconds, skip adding to uptime
                     logging.info(
@@ -2008,9 +1909,7 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
         transaction_summary_query = (
             Transactions.select(
                 fn.COUNT(Transactions.id).alias("total_transactions"),
-                fn.SUM(Transactions.total_consumption).alias(
-                    "total_electricity_used"
-                ),
+                fn.SUM(Transactions.total_consumption).alias("total_electricity_used"),
                 fn.SUM(
                     fn.TIMESTAMPDIFF(
                         SQL("SECOND"),
@@ -2027,9 +1926,7 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
         )
 
         total_transactions = transaction_summary_query.total_transactions
-        total_electricity_used = (
-            transaction_summary_query.total_electricity_used or 0.0
-        )
+        total_electricity_used = transaction_summary_query.total_electricity_used or 0.0
         total_time_occupied = (
             transaction_summary_query.total_time_occupied or 0
         )  # Ensure total_time_occupied is not None
@@ -2067,9 +1964,7 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
         max_usage_count = max(charger_uptime_data["peak_usage_times"])
         peak_usage_hours = [
             f"{hour}:00 - {hour + 1}:00"
-            for hour, count in enumerate(
-                charger_uptime_data["peak_usage_times"]
-            )
+            for hour, count in enumerate(charger_uptime_data["peak_usage_times"])
             if count == max_usage_count
         ]
 
@@ -2082,10 +1977,7 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
         uptime_seconds = charger_uptime_data["total_uptime_seconds"]
         uptime_percentage = (
             round(
-                (
-                    uptime_seconds
-                    / charger_uptime_data["total_possible_uptime_seconds"]
-                )
+                (uptime_seconds / charger_uptime_data["total_possible_uptime_seconds"])
                 * 100,
                 3,
             )
@@ -2156,9 +2048,7 @@ async def check_charger_inactivity(request: StatusRequest):
     charge_point_id = request.uid
 
     # Call the method to check inactivity and update the status if necessary
-    result = await central_system.check_inactivity_and_update_status(
-        charge_point_id
-    )
+    result = await central_system.check_inactivity_and_update_status(charge_point_id)
 
     return result
 
@@ -2202,6 +2092,6 @@ async def get_transaction_history_route(request: UserIDRequest):
     return await get_wallet_transaction_history(request.user_id)
 
 
-# if __name__ == "__main__":
-#     port = int(config("F_SERVER_PORT"))
-#     uvicorn.run(app, host=config("F_SERVER_HOST"), port=port)
+if __name__ == "__main__":
+    port = int(config("F_SERVER_PORT"))
+    uvicorn.run(app, host=config("F_SERVER_HOST"), port=port)

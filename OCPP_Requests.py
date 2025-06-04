@@ -1,12 +1,14 @@
-import asyncio
 import logging
-from datetime import datetime, timezone as dt_timezone
-from pytz import timezone
-from ocpp.v16 import call, call_result, ChargePoint as CP
+from datetime import datetime
+
 from ocpp.routing import on
+from ocpp.v16 import ChargePoint as CP
+from ocpp.v16 import call, call_result
+
 import Chargers_to_CMS_Parser as parser_c2c
 import CMS_to_Charger_Parser as parser_ctc
 from models import Transaction
+from utils.methods import send_charging_session_transaction_data_to_applicaton_layer
 
 
 class ChargePoint(CP):
@@ -61,15 +63,11 @@ class ChargePoint(CP):
                     logging.info(
                         f"Connector {connector_id} last transaction consumed {consumption_kwh:.3f} kWh."
                     )
-            self.state["connectors"][connector_id][
-                "last_meter_value"
-            ] = meter_value
+            self.state["connectors"][connector_id]["last_meter_value"] = meter_value
         if error_code:
             self.state["connectors"][connector_id]["error_code"] = error_code
         if transaction_id is not None:
-            self.state["connectors"][connector_id][
-                "transaction_id"
-            ] = transaction_id
+            self.state["connectors"][connector_id]["transaction_id"] = transaction_id
 
         # Check for errors
         if error_code and error_code != "NoError":
@@ -93,9 +91,7 @@ class ChargePoint(CP):
 
     def update_transaction_id(self, connector_id, transaction_id):
         if transaction_id is not None:
-            self.update_connector_state(
-                connector_id, transaction_id=transaction_id
-            )
+            self.update_connector_state(connector_id, transaction_id=transaction_id)
 
     # Inbound messages from chargers to CMS
 
@@ -182,9 +178,9 @@ class ChargePoint(CP):
         )
         self.update_transaction_id(connector_id, transaction_id)
         # Store the transaction record ID in the connector state if needed
-        self.state["connectors"][connector_id][
-            "transaction_record_id"
-        ] = transaction_record.id
+        self.state["connectors"][connector_id]["transaction_record_id"] = (
+            transaction_record.id
+        )
         self.state["status"] = "Active"
         self.update_connector_state(
             connector_id,
@@ -226,8 +222,12 @@ class ChargePoint(CP):
             transaction_record.stop_time = datetime.now()
             transaction_record.total_consumption = (
                 meter_stop - transaction_record.meter_start
-            )
+            ) / 1000
             transaction_record.save()
+
+            await send_charging_session_transaction_data_to_applicaton_layer(
+                transaction_record
+            )
 
         parser_c2c.parse_and_store_stop_transaction(self.charger_id, **kwargs)
         self.state["status"] = "Inactive"
@@ -238,9 +238,7 @@ class ChargePoint(CP):
             transaction_id=None,
         )
 
-        response = call_result.StopTransaction(
-            id_tag_info={"status": "Accepted"}
-        )
+        response = call_result.StopTransaction(id_tag_info={"status": "Accepted"})
         parser_ctc.parse_and_store_acknowledgment(
             self.charger_id,
             "StopTransaction",
@@ -287,9 +285,7 @@ class ChargePoint(CP):
         connector_id = kwargs.get("connector_id")
         status = kwargs.get("status")
         transaction_id = kwargs.get("transaction_id")
-        parser_c2c.parse_and_store_status_notification(
-            self.charger_id, **kwargs
-        )
+        parser_c2c.parse_and_store_status_notification(self.charger_id, **kwargs)
 
         self.update_connector_state(
             connector_id,
@@ -310,13 +306,9 @@ class ChargePoint(CP):
 
     @on("DiagnosticsStatusNotification")
     async def on_diagnostics_status_notification(self, **kwargs):
-        logging.debug(
-            f"Received DiagnosticsStatusNotification with kwargs: {kwargs}"
-        )
+        logging.debug(f"Received DiagnosticsStatusNotification with kwargs: {kwargs}")
         # self.mark_as_online()
-        parser_c2c.parse_and_store_diagnostics_status(
-            self.charger_id, **kwargs
-        )
+        parser_c2c.parse_and_store_diagnostics_status(self.charger_id, **kwargs)
 
         response = call_result.DiagnosticsStatusNotification()
         parser_ctc.parse_and_store_acknowledgment(
@@ -329,9 +321,7 @@ class ChargePoint(CP):
 
     @on("FirmwareStatusNotification")
     async def on_firmware_status_notification(self, **kwargs):
-        logging.debug(
-            f"Received FirmwareStatusNotification with kwargs: {kwargs}"
-        )
+        logging.debug(f"Received FirmwareStatusNotification with kwargs: {kwargs}")
         # self.mark_as_online()
         parser_c2c.parse_and_store_firmware_status(self.charger_id, **kwargs)
 
@@ -359,9 +349,7 @@ class ChargePoint(CP):
         logging.debug(f"RemoteStartTransaction response: {response}")
 
         transaction_id = (
-            response.transaction_id
-            if hasattr(response, "transaction_id")
-            else None
+            response.transaction_id if hasattr(response, "transaction_id") else None
         )
         self.update_transaction_id(connector_id, transaction_id)
 
@@ -378,9 +366,7 @@ class ChargePoint(CP):
         return response
 
     async def remote_stop_transaction(self, transaction_id):
-        logging.debug(
-            f"Sending RemoteStopTransaction: transaction_id {transaction_id}"
-        )
+        logging.debug(f"Sending RemoteStopTransaction: transaction_id {transaction_id}")
         request = call.RemoteStopTransaction(transaction_id=transaction_id)
 
         response = await self.call(request)
@@ -462,7 +448,7 @@ class ChargePoint(CP):
         return response
 
     async def get_configuration(self):
-        logging.debug(f"Sending GetConfiguration:")
+        logging.debug("Sending GetConfiguration:")
         request = call.GetConfiguration()
 
         parser_ctc.parse_and_store_get_configuration(self.charger_id)
@@ -473,9 +459,7 @@ class ChargePoint(CP):
 
             # Log the types and values of the configuration keys in the response
             if hasattr(response, "configuration_key"):
-                logging.debug(
-                    f"Configuration keys: {response.configuration_key}"
-                )
+                logging.debug(f"Configuration keys: {response.configuration_key}")
                 for config in response.configuration_key:
                     logging.debug(
                         f"Key: {config.get('key')} Type: {type(config.get('key'))}"
@@ -496,16 +480,14 @@ class ChargePoint(CP):
             raise
 
     async def clear_cache(self):
-        logging.debug(f"Sending ClearCache")
+        logging.debug("Sending ClearCache")
         request = call.ClearCache()
 
         response = await self.call(request)
         # self.mark_as_online()  # Mark as online when a response is received
         logging.debug(f"ClearCache response: {response}")
 
-        parser_ctc.parse_and_store_clear_cache(
-            self.charger_id, status=response.status
-        )
+        parser_ctc.parse_and_store_clear_cache(self.charger_id, status=response.status)
         parser_c2c.parse_and_store_acknowledgment(
             self.charger_id,
             "ClearCache",
@@ -642,9 +624,7 @@ class ChargePoint(CP):
         response = await self.call(request)
         return response
 
-    async def reserve_now(
-        self, connector_id, expiry_date, id_tag, reservation_id
-    ):
+    async def reserve_now(self, connector_id, expiry_date, id_tag, reservation_id):
         request = call.ReserveNow(
             connector_id=connector_id,
             expiry_date=expiry_date,
