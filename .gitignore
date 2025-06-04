@@ -4,3 +4,4 @@ QRCodes
 .env
 *.zip
 dbcert.pem
+venv
