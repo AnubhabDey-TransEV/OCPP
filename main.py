@@ -323,6 +323,7 @@ class CentralSystem:
             # Send configuration change requests
             await self.send_heartbeat_interval_change(charge_point_id)
             await self.send_sampled_metervalues_interval_change(charge_point_id)
+            await self.enforce_remote_only_mode(charge_point_id)
 
             # Await the completion of the start method
             await start_task
@@ -477,6 +478,39 @@ class CentralSystem:
                 f"Exception while sending MeterValueSampleInterval change: {e}"
             )
 
+    
+    async def enforce_remote_only_mode(self, charge_point_id: str):
+        try:
+            config_patch = [
+                ("AuthorizeRemoteTxRequests", "true"),
+                ("LocalAuthorizeOffline", "false"),
+                ("LocalPreAuthorize", "false"),
+                ("AuthorizationCacheEnabled", "false"),
+                ("AllowOfflineTxForUnknownId", "false"),
+                ("StopTransactionOnInvalidId", "true"),
+                ("ChargePointAuthEnable": "true") # Optional, if you want remote auth tags
+            ]
+
+            for key, value in config_patch:
+                logging.info(f"[ConfigSync] Setting {key} = {value} for {charge_point_id}")
+                response = await self.send_request(
+                    charge_point_id=charge_point_id,
+                    request_method="change_configuration",
+                    key=key,
+                    value=value
+                )
+
+                if response.status == "Accepted":
+                    logging.info(f"[ConfigSync] Applied {key} for {charge_point_id}")
+                else:
+                    logging.warning(
+                        f"[ConfigSync] Rejected: {key} for {charge_point_id} — response: {response.status}"
+                    )
+
+        except Exception as e:
+            logging.error(f"[ConfigSync] Failed to enforce remote-only mode: {e}")
+
+
     async def get_charger_data(self):
         """
         Fetch the entire charger data from Valkey cache or API if the cache is not available or expired.
@@ -509,7 +543,7 @@ class CentralSystem:
         """
         first_api_url = config("APICHARGERDATA")
         apiauthkey = config("APIAUTHKEY")
-        timeout = 120
+        timeout = 10
 
         response = requests.get(
             first_api_url, headers={"apiauthkey": apiauthkey}, timeout=timeout
@@ -1835,7 +1869,7 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
             api_url,
             headers={"apiauthkey": apiauthkey},
             json={"get_user_id": user_id},
-            timeout=120,
+            timeout=10,
         )
 
         if response.status_code != 200:
