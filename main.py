@@ -229,15 +229,6 @@ app = FastAPI(lifespan=lifespan)
 
 middleware = [
     Middleware(
-        TrustedHostMiddleware,
-        allowed_hosts=[
-            "hal.ocpp.transev.site",
-            "*.transev.site",
-            "localhost",
-            "127.0.0.1",
-        ],
-    ),
-    Middleware(
         CORSMiddleware,
         allow_origins=["*"],
         allow_credentials=True,
