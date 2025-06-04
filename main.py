@@ -291,19 +291,19 @@ class CentralSystem:
         await websocket.accept()
 
         # Verify if the charger ID exists
-        if not await self.verify_charger_id(charge_point_id):
-            await websocket.close(code=1000)
-            # Log failed connection attempt due to invalid charger ID
-            NetworkAnalytics.create(
-                event_type="EVSE Disconnect",
-                ev_id=charge_point_id,
-                ip_address=ip_address,
-                ip_address_information=ip_info,
-                endpoint="EVSE",
-                response_data="Charger ID verification failed",
-                timestamp=datetime.now(),
-            )
-            return
+        # if not await self.verify_charger_id(charge_point_id):
+        #     await websocket.close(code=1000)
+        #     # Log failed connection attempt due to invalid charger ID
+        #     NetworkAnalytics.create(
+        #         event_type="EVSE Disconnect",
+        #         ev_id=charge_point_id,
+        #         ip_address=ip_address,
+        #         ip_address_information=ip_info,
+        #         endpoint="EVSE",
+        #         response_data="Charger ID verification failed",
+        #         timestamp=datetime.now(),
+        #     )
+        #     return
 
         logging.info(f"Charge point {charge_point_id} connected.")
 
