@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Dict, Optional
 
 import requests
+import uvicorn
 
 # import uvloop
 import valkey
@@ -2102,6 +2103,11 @@ async def get_transaction_history_route(request: UserIDRequest):
     return await get_wallet_transaction_history(request.user_id)
 
 
-# if __name__ == "__main__":
-#     port = int(config("F_SERVER_PORT"))
-#     uvicorn.run(app, host=config("F_SERVER_HOST"), port=port)
+if __name__ == "__main__":
+    uvicorn.run(
+        "main:app",
+        host=config("F_SERVER_HOST", default="127.0.0.1"),
+        port=int(config("F_SERVER_PORT", default=8050)),
+        proxy_headers=True,
+        reload=False,  # set True in dev
+    )
