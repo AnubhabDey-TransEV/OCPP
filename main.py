@@ -899,6 +899,14 @@ class ChargerAnalyticsRequest(BaseModel):
 # REST API endpoints
 
 
+@app.post("/api/hello")
+async def hello():
+    """
+    A simple endpoint to check if the API is running.
+    """
+    return {"message": "Helloo, this is the OCPP HAL API. It is running fine."}
+
+
 # Handle OPTIONS for /api/change_availability
 @app.options("/api/change_availability")
 async def options_change_availability():
