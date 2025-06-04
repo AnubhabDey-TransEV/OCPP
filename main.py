@@ -488,7 +488,7 @@ class CentralSystem:
                 ("AuthorizationCacheEnabled", "false"),
                 ("AllowOfflineTxForUnknownId", "false"),
                 ("StopTransactionOnInvalidId", "true"),
-                ("ChargePointAuthEnable": "true") # Optional, if you want remote auth tags
+                ("ChargePointAuthEnable", "true") # Optional, if you want remote auth tags
             ]
 
             for key, value in config_patch:
