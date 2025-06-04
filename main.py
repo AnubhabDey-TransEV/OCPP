@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from Chargers_to_CMS_Parser import (
     parse_and_store_cancel_reservation_response,
@@ -225,7 +226,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+
 middleware = [
+    Middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=[
+            "hal.ocpp.transev.site",
+            "*.transev.site",
+            "localhost",
+            "127.0.0.1",
+        ],
+    ),
     Middleware(
         CORSMiddleware,
         allow_origins=["*"],
