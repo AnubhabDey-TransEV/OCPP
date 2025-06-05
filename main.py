@@ -166,9 +166,9 @@ class CentralSystem:
         await websocket.accept()
 
         # Verify if the charger ID exists
-        # if not await self.verify_charger_id(charge_point_id):
-        #     await websocket.close(code=1000)
-        #     return
+        if not await self.verify_charger_id(charge_point_id):
+            await websocket.close(code=1000)
+            return
 
         logging.info(f"Charge point {charge_point_id} connected.")
 
