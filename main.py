@@ -290,12 +290,12 @@ class CentralSystem:
                 charge_point_id=charge_point_id,
                 request_method="change_configuration",
                 key="HeartbeatInterval",
-                value="15",
+                value="900",
             )
 
             if response.status == "Accepted":
                 logging.info(
-                    f"Successfully set HeartbeatInterval to 10 seconds for charger {charge_point_id}"
+                    f"Successfully set HeartbeatInterval to 900 seconds for charger {charge_point_id}"
                 )
             else:
                 logging.error(
@@ -314,12 +314,12 @@ class CentralSystem:
                 charge_point_id=charge_point_id,
                 request_method="change_configuration",
                 key="MeterValueSampleInterval",
-                value="90",
+                value="60",
             )
 
             if response.status == "Accepted":
                 logging.info(
-                    f"Successfully set MeterValueSampleInterval to 10 seconds for charger {charge_point_id}"
+                    f"Successfully set MeterValueSampleInterval to 60 seconds for charger {charge_point_id}"
                 )
             else:
                 logging.error(
@@ -343,7 +343,7 @@ class CentralSystem:
                 (
                     "ChargePointAuthEnable",
                     "true",
-                ),  # Optional, if you want remote auth tags
+                ),
             ]
 
             for key, value in config_patch:
