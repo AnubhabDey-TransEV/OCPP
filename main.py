@@ -67,11 +67,6 @@ from wallet_methods import (
 )
 from dbconn import keep_db_alive
 
-# asyncio.set_event_loop(uvloop.new_event_loop())
-
-# setup_logging()
-# logging.getLogger().setLevel(logging.DEBUG)
-
 CHARGER_DATA_KEY = "charger_data_cache"
 CACHE_EXPIRY = 7200  # Cache TTL in seconds (2 hours)  # Cache for 2 hours
 
@@ -81,21 +76,6 @@ app = FastAPI()
 
 valkey_uri = config("VALKEY_URI")
 valkey_client = valkey.from_url(valkey_uri)
-
-
-async def get_ip_information(ip_address: str):
-    try:
-        # Replace this URL with the actual IP lookup service API endpoint
-        response = requests.get(f"http://ip-api.com/json/{ip_address}")
-
-        if response.status_code == 200:
-            # Return the full JSON response as the IP information
-            # Convert the JSON response to a string
-            return json.dumps(response.json())
-    except Exception as e:
-        print(f"Failed to retrieve IP information for {ip_address}: {e}")
-        return None
-
 
 class VerifyAPIKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -111,88 +91,6 @@ class VerifyAPIKeyMiddleware(BaseHTTPMiddleware):
                     raise HTTPException(status_code=403, detail="Invalid API key")
         response = await call_next(request)
         return response
-
-
-# class RateLimitMiddleware(BaseHTTPMiddleware):
-#     def __init__(
-#         self,
-#         app: FastAPI,
-#         rate_limit: int = int(config("RPS")),
-#         time_window: int = int(config("TWS")),
-#     ):
-#         super().__init__(app)
-#         self.rate_limit = rate_limit  # Max requests allowed
-#         self.time_window = timedelta(seconds=time_window)  # Time window in seconds
-#         self.requests = defaultdict(list)  # Tracks requests per IP
-#         self.lock = asyncio.Lock()  # Ensures safe access to `requests`
-
-# async def dispatch(self, request: Request, call_next):
-#     # Skip rate limiting for WebSocket connections
-#     if "sec-websocket-key" not in request.headers:
-#         client_ip = request.client.host
-#         current_time = datetime.now()
-
-#         async with self.lock:
-#             # Filter out old requests outside the time window
-#             self.requests[client_ip] = [
-#                 timestamp
-#                 for timestamp in self.requests[client_ip]
-#                 if current_time - timestamp < self.time_window
-#             ]
-
-#             # Enforce rate limit
-#             if len(self.requests[client_ip]) >= self.rate_limit:
-#                 return JSONResponse(
-#                     status_code=429,
-#                     content={"detail": "Too many requests"},
-#                 )
-
-#             # Record the current request time
-#             self.requests[client_ip].append(current_time)
-
-#     return await call_next(request)
-
-
-class APITrackingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        # Skip tracking for WebSocket connections and non-/api/ paths
-        if "sec-websocket-key" not in request.headers and request.url.path.startswith(
-            "/api/"
-        ):
-            # Capture request data and client IP
-            ip_address = request.client.host
-            endpoint = request.url.path
-            request_data = await request.body()
-
-            ip_info = await get_ip_information(ip_address)
-
-            # Log the API request
-            NetworkAnalytics.create(
-                event_type="API Request",
-                ip_address=ip_address,
-                ip_information=ip_info,
-                endpoint=endpoint,
-                request_data=(request_data.decode("utf-8") if request_data else None),
-                timestamp=datetime.now(),
-            )
-
-            # Process the request
-            response = await call_next(request)
-
-            # Capture and log the response data
-            NetworkAnalytics.create(
-                event_type="API Response",
-                ip_address=ip_address,
-                ip_information=ip_info,
-                endpoint="CMS",
-                timestamp=datetime.now(),
-            )
-
-            return response
-        else:
-            # If it's a WebSocket request or not an /api/ path, skip tracking
-            return await call_next(request)
-
 
 async def refresh_cache():
     try:
