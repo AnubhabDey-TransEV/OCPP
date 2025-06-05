@@ -31,7 +31,6 @@ from Chargers_to_CMS_Parser import (
 from dbconn import keep_db_alive
 from models import (
     Analytics,
-    NetworkAnalytics,
     Reservation,
     db,
 )
@@ -163,7 +162,6 @@ class CentralSystem:
 
     async def handle_charge_point(self, websocket: WebSocket, charge_point_id: str):
         # Capture charger IP address
-        ip_address = websocket.client.host
 
         await websocket.accept()
 

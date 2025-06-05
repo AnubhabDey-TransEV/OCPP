@@ -1,18 +1,17 @@
+import uuid
+from datetime import datetime
+
 from peewee import (
-    Model,
-    AutoField,
     CharField,
     DateTimeField,
-    IntegerField,
-    FloatField,
-    UUIDField,
-    TextField,
     DecimalField,
+    FloatField,
     ForeignKeyField,
+    IntegerField,
+    Model,
 )
-import uuid
+
 from dbconn import get_database
-from datetime import datetime
 
 # Get the database connection
 db = get_database()
@@ -27,45 +26,45 @@ class BaseModel(Model):
         database = db
 
 
-class NetworkAnalytics(Model):
-    event_type = (
-        CharField()
-    )  # 'connect', 'disconnect', 'request', or 'response'
-    ev_id = CharField(
-        null=True
-    )  # EV identifier for WebSocket connections, null for API events
-    ip_address = CharField()  # IP address associated with the event
-    ip_information = TextField()
-    endpoint = (
-        CharField()
-    )  # Charger ID for WebSocket, API client endpoint for requests, 'CMS' for responses
-    request_data = TextField(
-        null=True
-    )  # JSON or string format of request data
-    response_data = TextField(
-        null=True
-    )  # JSON or string format of response data
-    timestamp = DateTimeField(
-        default=datetime.now
-    )  # Date and time of the event
+# class NetworkAnalytics(Model):
+#     event_type = (
+#         CharField()
+#     )  # 'connect', 'disconnect', 'request', or 'response'
+#     ev_id = CharField(
+#         null=True
+#     )  # EV identifier for WebSocket connections, null for API events
+#     ip_address = CharField()  # IP address associated with the event
+#     ip_information = TextField()
+#     endpoint = (
+#         CharField()
+#     )  # Charger ID for WebSocket, API client endpoint for requests, 'CMS' for responses
+#     request_data = TextField(
+#         null=True
+#     )  # JSON or string format of request data
+#     response_data = TextField(
+#         null=True
+#     )  # JSON or string format of response data
+#     timestamp = DateTimeField(
+#         default=datetime.now
+#     )  # Date and time of the event
 
-    class Meta:
-        database = db
-        table_name = "network_analytics"
+#     class Meta:
+#         database = db
+#         table_name = "network_analytics"
 
 
-class Logs(Model):
-    id = AutoField()
-    uuid = UUIDField(default=getUUID, unique=True)
-    log_message = TextField()
-    log_level = CharField()  # e.g., INFO, ERROR, DEBUG
-    timestamp = DateTimeField()
-    file_origin = CharField()  # File which originated the log
-    error_details = TextField(null=True)  # Store error details if any
+# class Logs(Model):
+#     id = AutoField()
+#     uuid = UUIDField(default=getUUID, unique=True)
+#     log_message = TextField()
+#     log_level = CharField()  # e.g., INFO, ERROR, DEBUG
+#     timestamp = DateTimeField()
+#     file_origin = CharField()  # File which originated the log
+#     error_details = TextField(null=True)  # Store error details if any
 
-    class Meta:
-        database = db
-        table_name = "logs"
+#     class Meta:
+#         database = db
+#         table_name = "logs"
 
 
 class Transaction(BaseModel):
@@ -74,9 +73,7 @@ class Transaction(BaseModel):
     connector_id = IntegerField()
     meter_start = FloatField()
     meter_stop = FloatField()
-    total_consumption = (
-        FloatField()
-    )  # You can manually compute this in your code
+    total_consumption = FloatField()  # You can manually compute this in your code
     start_time = DateTimeField()
     stop_time = DateTimeField()
     id_tag = CharField()
@@ -149,9 +146,7 @@ class Analytics(BaseModel):
     total_transactions = IntegerField()
     total_electricity_used_kwh = FloatField()
     occupancy_rate_percentage = FloatField()
-    average_session_duration = (
-        CharField()
-    )  # Storing in a human-readable format
+    average_session_duration = CharField()  # Storing in a human-readable format
     peak_usage_times = CharField()  # Storing as a comma-separated string
 
     class Meta:
@@ -206,11 +201,11 @@ db.create_tables(
         OCPPMessageCharger,
         QRCodeData,
         Analytics,
-        Logs,
+        # Logs,
         Wallet,
         WalletRecharge,
         WalletTransactions,
-        NetworkAnalytics,
+        # NetworkAnalytics,
     ],
     safe=True,
 )
