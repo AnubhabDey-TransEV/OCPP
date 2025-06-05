@@ -65,6 +65,7 @@ from wallet_methods import (
     get_wallet_transaction_history,
     recharge_wallet,
 )
+from dbconn import keep_db_alive
 
 # asyncio.set_event_loop(uvloop.new_event_loop())
 
@@ -212,6 +213,7 @@ async def lifespan(app: FastAPI):
     # Startup actions
     try:
         await refresh_cache()  # Cache refresh logic at startup
+        await keep_db_alive()
         print("Startup: Cache refreshed.")
     except Exception as e:
         print(f"Failed to refresh cache: {e}")
