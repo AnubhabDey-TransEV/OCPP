@@ -8,8 +8,6 @@ from typing import Dict, Optional
 
 import requests
 import uvicorn
-
-# import uvloop
 import valkey
 from decouple import config
 from fastapi import (
@@ -20,18 +18,17 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import JSONResponse
-from peewee import DoesNotExist
+from peewee import SQL, DoesNotExist, fn
 from playhouse.shortcuts import model_to_dict
 from pydantic import BaseModel
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from Chargers_to_CMS_Parser import (
     parse_and_store_cancel_reservation_response,
-)  # Assuming this handles responses
-from loggingHandler import setup_logging
+)
+from dbconn import keep_db_alive
 from models import (
     Analytics,
     NetworkAnalytics,
@@ -49,7 +46,7 @@ from models import (
 )
 from OCPP_Requests import (
     ChargePoint,
-)  # Assuming this is where ChargePoint is implemented
+)
 from wallet_api_models import (
     DebitWalletRequest,
     EditWalletRequest,
@@ -65,7 +62,6 @@ from wallet_methods import (
     get_wallet_transaction_history,
     recharge_wallet,
 )
-from dbconn import keep_db_alive
 
 CHARGER_DATA_KEY = "charger_data_cache"
 CACHE_EXPIRY = 7200  # Cache TTL in seconds (2 hours)  # Cache for 2 hours
@@ -76,6 +72,7 @@ app = FastAPI()
 
 valkey_uri = config("VALKEY_URI")
 valkey_client = valkey.from_url(valkey_uri)
+
 
 class VerifyAPIKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -91,6 +88,7 @@ class VerifyAPIKeyMiddleware(BaseHTTPMiddleware):
                     raise HTTPException(status_code=403, detail="Invalid API key")
         response = await call_next(request)
         return response
+
 
 async def refresh_cache():
     try:
@@ -135,7 +133,7 @@ middleware = [
         allow_methods=["*"],
         allow_headers=["*"],
     ),
-    Middleware(VerifyAPIKeyMiddleware)
+    Middleware(VerifyAPIKeyMiddleware),
 ]
 
 app = FastAPI(middleware=middleware)
@@ -166,14 +164,13 @@ class CentralSystem:
     async def handle_charge_point(self, websocket: WebSocket, charge_point_id: str):
         # Capture charger IP address
         ip_address = websocket.client.host
-        ip_info = await get_ip_information(ip_address)
 
         # Log WebSocket connection event
         NetworkAnalytics.create(
             event_type="EVSE Connect",
             ev_id=charge_point_id,
             ip_address=ip_address,
-            ip_information=ip_info,
+            ip_information="Null",
             endpoint="EVSE",  # Charger ID as the endpoint for WebSocket
             timestamp=datetime.now(),
         )
@@ -188,7 +185,7 @@ class CentralSystem:
         #         event_type="EVSE Disconnect",
         #         ev_id=charge_point_id,
         #         ip_address=ip_address,
-        #         ip_address_information=ip_info,
+        #         ip_address_information="Null",
         #         endpoint="EVSE",
         #         response_data="Charger ID verification failed",
         #         timestamp=datetime.now(),
@@ -240,7 +237,7 @@ class CentralSystem:
                 event_type="EVSE Disconnect",
                 ev_id=charge_point_id,
                 ip_address=ip_address,
-                ip_information=ip_info,
+                ip_information="Null",
                 endpoint="EVSE",
                 timestamp=datetime.now(),
             )
@@ -261,7 +258,7 @@ class CentralSystem:
                 event_type="EVSE Error (Not Connected)",
                 ev_id=charge_point_id,
                 ip_address=ip_address,
-                ip_information=ip_info,
+                ip_information="Null",
                 endpoint="EVSE",
                 response_data=f"Error: {e}",
                 timestamp=datetime.now(),
@@ -377,7 +374,6 @@ class CentralSystem:
                 f"Exception while sending MeterValueSampleInterval change: {e}"
             )
 
-    
     async def enforce_remote_only_mode(self, charge_point_id: str):
         try:
             config_patch = [
@@ -387,16 +383,21 @@ class CentralSystem:
                 ("AuthorizationCacheEnabled", "false"),
                 ("AllowOfflineTxForUnknownId", "false"),
                 ("StopTransactionOnInvalidId", "true"),
-                ("ChargePointAuthEnable", "true") # Optional, if you want remote auth tags
+                (
+                    "ChargePointAuthEnable",
+                    "true",
+                ),  # Optional, if you want remote auth tags
             ]
 
             for key, value in config_patch:
-                logging.info(f"[ConfigSync] Setting {key} = {value} for {charge_point_id}")
+                logging.info(
+                    f"[ConfigSync] Setting {key} = {value} for {charge_point_id}"
+                )
                 response = await self.send_request(
                     charge_point_id=charge_point_id,
                     request_method="change_configuration",
                     key=key,
-                    value=value
+                    value=value,
                 )
 
                 if response.status == "Accepted":
@@ -408,7 +409,6 @@ class CentralSystem:
 
         except Exception as e:
             logging.error(f"[ConfigSync] Failed to enforce remote-only mode: {e}")
-
 
     async def get_charger_data(self):
         """
@@ -1715,11 +1715,6 @@ def format_duration(seconds):
         parts.append(f"{int(seconds)} seconds")
 
     return ", ".join(parts) if parts else "0 seconds"
-
-
-from datetime import datetime
-
-from peewee import SQL, fn
 
 
 @app.post("/api/charger_analytics")
