@@ -165,31 +165,11 @@ class CentralSystem:
         # Capture charger IP address
         ip_address = websocket.client.host
 
-        # Log WebSocket connection event
-        NetworkAnalytics.create(
-            event_type="EVSE Connect",
-            ev_id=charge_point_id,
-            ip_address=ip_address,
-            ip_information="Null",
-            endpoint="EVSE",  # Charger ID as the endpoint for WebSocket
-            timestamp=datetime.now(),
-        )
-
         await websocket.accept()
 
         # Verify if the charger ID exists
         # if not await self.verify_charger_id(charge_point_id):
         #     await websocket.close(code=1000)
-        #     # Log failed connection attempt due to invalid charger ID
-        #     NetworkAnalytics.create(
-        #         event_type="EVSE Disconnect",
-        #         ev_id=charge_point_id,
-        #         ip_address=ip_address,
-        #         ip_address_information="Null",
-        #         endpoint="EVSE",
-        #         response_data="Charger ID verification failed",
-        #         timestamp=datetime.now(),
-        #     )
         #     return
 
         logging.info(f"Charge point {charge_point_id} connected.")
@@ -232,16 +212,6 @@ class CentralSystem:
             self.charge_points[charge_point_id].online = False
             await self.notify_frontend(charge_point_id, online=False)
 
-            # Log WebSocket disconnection event
-            NetworkAnalytics.create(
-                event_type="EVSE Disconnect",
-                ev_id=charge_point_id,
-                ip_address=ip_address,
-                ip_information="Null",
-                endpoint="EVSE",
-                timestamp=datetime.now(),
-            )
-
         except Exception as e:
             # Handle any other exceptions, cleanup, and close the WebSocket connection
             logging.error(
@@ -252,17 +222,6 @@ class CentralSystem:
             self.charge_points[charge_point_id].online = False
             await self.notify_frontend(charge_point_id, online=False)
             await websocket.close()
-
-            # Log error event with the exception details
-            NetworkAnalytics.create(
-                event_type="EVSE Error (Not Connected)",
-                ev_id=charge_point_id,
-                ip_address=ip_address,
-                ip_information="Null",
-                endpoint="EVSE",
-                response_data=f"Error: {e}",
-                timestamp=datetime.now(),
-            )
 
     async def handle_frontend_websocket(self, websocket: WebSocket, uid: str):
         await websocket.accept()
