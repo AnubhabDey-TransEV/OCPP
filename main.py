@@ -69,7 +69,7 @@ from dbconn import keep_db_alive
 
 # asyncio.set_event_loop(uvloop.new_event_loop())
 
-setup_logging()
+# setup_logging()
 # logging.getLogger().setLevel(logging.DEBUG)
 
 CHARGER_DATA_KEY = "charger_data_cache"
@@ -237,8 +237,7 @@ middleware = [
         allow_methods=["*"],
         allow_headers=["*"],
     ),
-    Middleware(VerifyAPIKeyMiddleware),
-    Middleware(APITrackingMiddleware),
+    Middleware(VerifyAPIKeyMiddleware)
 ]
 
 app = FastAPI(middleware=middleware)
