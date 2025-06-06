@@ -67,8 +67,6 @@ CACHE_EXPIRY = 7200  # Cache TTL in seconds (2 hours)  # Cache for 2 hours
 
 API_KEY_NAME = "x-api-key"
 
-app = FastAPI()
-
 valkey_uri = config("VALKEY_URI")
 valkey_client = valkey.from_url(valkey_uri)
 
@@ -105,23 +103,24 @@ async def refresh_cache():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup actions
+    print("🚀 Lifespan startup triggered.")
     try:
-        await refresh_cache()  # Cache refresh logic at startup
-        await keep_db_alive()
-        print("Startup: Cache refreshed.")
+        await refresh_cache()
+        print("✅ refresh_cache() completed.")
+        app.state.db_heartbeat_task = asyncio.create_task(keep_db_alive())
+        print("🔄 DB heartbeat task started.")
     except Exception as e:
-        print(f"Failed to refresh cache: {e}")
-    yield  # The app runs while it yields here
-    # Shutdown actions
+        print(f"❌ Exception during startup: {e}")
+
+    print("🔥 Yielding to start app...")
+    yield
+    print("🧹 App is shutting down...")
+
     try:
-        valkey_client.delete(CHARGER_DATA_KEY)  # Cache cleanup logic at shutdown
-        print("Shutdown: Cache cleared.")
+        valkey_client.delete(CHARGER_DATA_KEY)
+        print("🧼 Cache cleared on shutdown.")
     except Exception as e:
-        print(f"Failed to clear cache on shutdown: {e}")
-
-
-app = FastAPI(lifespan=lifespan)
+        print(f"❌ Error during shutdown: {e}")
 
 
 middleware = [
@@ -135,7 +134,10 @@ middleware = [
     Middleware(VerifyAPIKeyMiddleware),
 ]
 
-app = FastAPI(middleware=middleware)
+app = FastAPI(
+    middleware=middleware,
+    lifespan=lifespan,
+)
 
 
 class WebSocketAdapter:
@@ -161,63 +163,72 @@ class CentralSystem:
         self.pending_start_transactions = {}
 
     async def handle_charge_point(self, websocket: WebSocket, charge_point_id: str):
-        # Capture charger IP address
-
-        await websocket.accept()
-
-        # Verify if the charger ID exists
+        # 🛡 Verify charger ID
         if not await self.verify_charger_id(charge_point_id):
             await websocket.close(code=1000)
             return
 
+        # 🔄 Handle reconnect: cleanup previous WS/Valkey state
+        if charge_point_id in self.active_connections:
+            try:
+                await self.active_connections[charge_point_id].close()
+                logging.warning(f"[Reconnect] Closed stale WebSocket for charger {charge_point_id}")
+            except Exception as e:
+                logging.error(f"[Reconnect] Error closing old WebSocket for {charge_point_id}: {e}")
+
+            self.active_connections.pop(charge_point_id, None)
+            self.charge_points.pop(charge_point_id, None)
+
+            try:
+                valkey_client.delete(f"active_connections:{charge_point_id}")
+            except Exception as e:
+                logging.warning(f"[Reconnect] Could not delete Valkey key for {charge_point_id}: {e}")
+
+        await websocket.accept()
         logging.info(f"Charge point {charge_point_id} connected.")
 
-        # Store the WebSocket connection in Valkey with the charge_point_id as the key
+        # 💾 Track WebSocket connection
         valkey_client.set(f"active_connections:{charge_point_id}", os.getpid())
-
-        # Add the charge_point_id to self.active_connections
         self.active_connections[charge_point_id] = websocket
 
-        # Create a WebSocket adapter for the charge point
+        # 🧱 Register charge point
         ws_adapter = WebSocketAdapter(websocket)
         charge_point = ChargePoint(charge_point_id, ws_adapter)
-
-        # Store the charge point object in the local in-memory dictionary
         self.charge_points[charge_point_id] = charge_point
-        self.charge_points[charge_point_id].online = True
+        charge_point.online = True
+
+        # 📢 Frontend update
         await self.notify_frontend(charge_point_id, online=True)
 
         try:
-            # Start the charge point in a background task
+            # 🚀 Start main loop
             start_task = asyncio.create_task(charge_point.start())
 
-            # Wait for a brief moment to ensure the start method has begun
+            # ⏳ Grace period for charger to get ready
             await asyncio.sleep(5)
 
-            # Send configuration change requests
+            # 🔧 Push configuration
             await self.send_heartbeat_interval_change(charge_point_id)
             await self.send_sampled_metervalues_interval_change(charge_point_id)
             await self.enforce_remote_only_mode(charge_point_id)
 
-            # Await the completion of the start method
+            # 🧘‍♂️ Wait until charger disconnects
             await start_task
 
         except WebSocketDisconnect:
-            # Handle WebSocket disconnect: cleanup Valkey, self.active_connections, and local memory
             logging.info(f"Charge point {charge_point_id} disconnected.")
-            valkey_client.delete(f"active_connections:{charge_point_id}")
-            self.active_connections.pop(charge_point_id, None)
-            self.charge_points[charge_point_id].online = False
-            await self.notify_frontend(charge_point_id, online=False)
 
         except Exception as e:
-            # Handle any other exceptions, cleanup, and close the WebSocket connection
-            logging.error(
-                f"Error occurred while handling charge point {charge_point_id}: {e}"
-            )
+            logging.error(f"Error occurred while handling charge point {charge_point_id}: {e}")
+
+        finally:
+            # 🧹 Always cleanup on disconnect or crash
             valkey_client.delete(f"active_connections:{charge_point_id}")
             self.active_connections.pop(charge_point_id, None)
-            self.charge_points[charge_point_id].online = False
+
+            if charge_point_id in self.charge_points:
+                self.charge_points[charge_point_id].online = False
+
             await self.notify_frontend(charge_point_id, online=False)
             await websocket.close()
 
