@@ -230,7 +230,14 @@ class CentralSystem:
                 self.charge_points[charge_point_id].online = False
 
             await self.notify_frontend(charge_point_id, online=False)
-            await websocket.close()
+            try:
+                await websocket.close()
+            except RuntimeError as e:
+                if "websocket.close" in str(e):
+                    logging.warning(f"[Cleanup] WebSocket for {charge_point_id} already closed.")
+                else:
+                    logging.error(f"[Cleanup] Error closing WebSocket for {charge_point_id}: {e}")
+
 
     async def handle_frontend_websocket(self, websocket: WebSocket, uid: str):
         await websocket.accept()
