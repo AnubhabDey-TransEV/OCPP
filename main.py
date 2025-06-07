@@ -109,6 +109,9 @@ async def lifespan(app: FastAPI):
         print("✅ refresh_cache() completed.")
         app.state.db_heartbeat_task = asyncio.create_task(keep_db_alive())
         print("🔄 DB heartbeat task started.")
+        app.state.inactivity_watchdog_task = asyncio.create_task(central_system.periodic_inactivity_watchdog())
+        print("Charger inactivity watchdog started.")
+
     except Exception as e:
         print(f"❌ Exception during startup: {e}")
 
@@ -308,7 +311,7 @@ class CentralSystem:
                 charge_point_id=charge_point_id,
                 request_method="change_configuration",
                 key="HeartbeatInterval",
-                value="900",
+                value="30",
             )
 
             if response.status == "Accepted":
@@ -454,7 +457,7 @@ class CentralSystem:
         time_difference = (current_time - last_message_time).total_seconds()
 
         # Check if more than 2 minutes (120 seconds) have passed since the last message
-        if time_difference > 120 and charge_point.online:
+        if time_difference > 60 and charge_point.online:
             # If the charger is marked as online but has been inactive for more than 2 minutes, update its status to offline
             charge_point.online = False
             charge_point.state["status"] = "Offline"
@@ -493,6 +496,41 @@ class CentralSystem:
                     )
                 except Exception as e:
                     logging.error(f"Error closing WebSocket for {charge_point_id}: {e}")
+
+    async def periodic_inactivity_watchdog(self):
+        """
+        Background loop that checks all known chargers for inactivity every 60 seconds.
+        Includes exponential backoff retries for up to 3 failures per charger.
+        After that, it resets the count and tries again after a full minute.
+        """
+        failure_counts = {}
+
+        while True:
+            try:
+                charger_data = await self.get_charger_data()
+                all_charger_ids = [item["uid"] for item in charger_data]
+
+                for charger_id in all_charger_ids:
+                    try:
+                        await self.check_inactivity_and_update_status(charger_id)
+                        failure_counts[charger_id] = 0  # reset on success
+                    except Exception as e:
+                        count = failure_counts.get(charger_id, 0)
+                        if count < 3:
+                            delay = 2 ** count
+                            logging.warning(f"[Watchdog] Failed to check {charger_id}: {e}. Retrying in {delay}s...")
+                            failure_counts[charger_id] = count + 1
+                            await asyncio.sleep(delay)
+                        else:
+                            logging.error(f"[Watchdog] Failed 3 times on {charger_id}, skipping for 60s.")
+                            failure_counts[charger_id] = 0  # reset after long wait
+
+                await asyncio.sleep(60)
+
+            except Exception as e:
+                logging.critical(f"[Watchdog] Global error in periodic inactivity check: {e}")
+                await asyncio.sleep(60)
+
 
     async def verify_charger_id(self, charge_point_id: str) -> bool:
         """
