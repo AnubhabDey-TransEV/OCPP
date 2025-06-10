@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import multiprocessing
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -24,7 +25,7 @@ from pydantic import BaseModel
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
-
+import multiprocessing
 from Chargers_to_CMS_Parser import (
     parse_and_store_cancel_reservation_response,
 )
@@ -164,6 +165,8 @@ class CentralSystem:
         self.verification_failures = {}
         self.frontend_connections = {}
         self.pending_start_transactions = {}
+        max_workers = int(os.getenv("MAX_CONCURRENT_REQUESTS", multiprocessing.cpu_count() * 3))
+        self.send_request_semaphore = asyncio.Semaphore(max_workers)
 
     async def handle_charge_point(self, websocket: WebSocket, charge_point_id: str):
         # 🛡 Verify charger ID
@@ -586,11 +589,13 @@ class CentralSystem:
             return {"error": f"Request method {request_method} not found"}
 
         try:
-            response = await method(*args, **kwargs)
+            async with self.send_request_semaphore:
+                response = await method(*args, **kwargs)
             logging.info(
                 f"Sent {request_method} to charge point {charge_point_id} with response: {response}"
             )
             return response
+
         except Exception as e:
             logging.error(
                 f"Error sending {request_method} to charge point {charge_point_id}: {e}"
