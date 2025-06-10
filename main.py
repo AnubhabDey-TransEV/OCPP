@@ -62,6 +62,7 @@ from wallet_methods import (
     get_wallet_transaction_history,
     recharge_wallet,
 )
+from fastapi.middleware.gzip import GZipMiddleware
 
 CHARGER_DATA_KEY = "charger_data_cache"
 CACHE_EXPIRY = 7200  # Cache TTL in seconds (2 hours)  # Cache for 2 hours
@@ -136,6 +137,7 @@ middleware = [
         allow_headers=["*"],
     ),
     Middleware(VerifyAPIKeyMiddleware),
+    Middleware(GZipMiddleware),
 ]
 
 app = FastAPI(
