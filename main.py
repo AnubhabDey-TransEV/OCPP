@@ -5,7 +5,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Dict, Optional
-
+import httpx
 import requests
 import uvicorn
 import valkey
@@ -422,9 +422,8 @@ class CentralSystem:
         apiauthkey = config("APIAUTHKEY")
         timeout = 10
 
-        response = requests.get(
-            first_api_url, headers={"apiauthkey": apiauthkey}, timeout=timeout
-        )
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(first_api_url, headers={"apiauthkey": apiauthkey})
 
         if response.status_code != 200:
             logging.error("Error fetching charger data from API")
