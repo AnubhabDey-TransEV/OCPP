@@ -291,21 +291,26 @@ class CentralSystem:
                     del self.frontend_connections[uid]
 
     async def notify_frontend(self, charge_point_id: str, online: bool):
-        # Notify all frontends listening for this specific charger `uid`
         if charge_point_id in self.frontend_connections:
-            for ws in list(self.frontend_connections[charge_point_id]):
-                try:
-                    # Send the charger status update to the frontend
-                    await ws.send_json(
-                        {
-                            "charger_id": charge_point_id,
-                            "status": "Online" if online else "Offline",
-                        }
-                    )
-                except Exception as e:
-                    logging.error(
-                        f"Error sending WebSocket message to frontend for charger {charge_point_id}: {e}"
-                    )
+            websockets = list(self.frontend_connections[charge_point_id])
+            payload = {
+                "charger_id": charge_point_id,
+                "status": "Online" if online else "Offline",
+            }
+
+            send_tasks = []
+            for ws in websockets:
+                send_tasks.append(self._safe_send(ws, payload, charge_point_id))
+
+            await asyncio.gather(*send_tasks, return_exceptions=True)
+    
+    async def _safe_send(self, ws: WebSocket, payload: dict, charge_point_id: str):
+        try:
+            await ws.send_json(payload)
+        except Exception as e:
+            logging.error(
+                f"Error sending WebSocket message to frontend for charger {charge_point_id}: {e}"
+            )
 
     async def send_heartbeat_interval_change(self, charge_point_id: str):
         try:
