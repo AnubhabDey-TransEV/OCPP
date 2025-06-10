@@ -375,7 +375,7 @@ class CentralSystem:
                     "ChargePointAuthEnable",
                     "true",
                 ),
-                ("FreeVendEnabled", "false")
+                ("FreevendEnabled", "false")
             ]
 
             for key, value in config_patch:
