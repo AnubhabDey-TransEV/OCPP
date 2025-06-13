@@ -213,11 +213,9 @@ class CentralSystem:
             start_task = asyncio.create_task(charge_point.start())
 
             # ⏳ Grace period for charger to get ready
-            await asyncio.sleep(5)
+            await asyncio.sleep(10)
 
             # 🔧 Push configuration
-            await self.send_heartbeat_interval_change(charge_point_id)
-            await self.send_sampled_metervalues_interval_change(charge_point_id)
             await self.enforce_remote_only_mode(charge_point_id)
 
             # 🧘‍♂️ Wait until charger disconnects
@@ -314,90 +312,78 @@ class CentralSystem:
                 f"Error sending WebSocket message to frontend for charger {charge_point_id}: {e}"
             )
 
-    async def send_heartbeat_interval_change(self, charge_point_id: str):
-        try:
-            logging.info(f"Sending HeartbeatInterval change to {charge_point_id}")
-            response = await self.send_request(
-                charge_point_id=charge_point_id,
-                request_method="change_configuration",
-                key="HeartbeatInterval",
-                value="30",
-            )
-
-            if response.status == "Accepted":
-                logging.info(
-                    f"Successfully set HeartbeatInterval to 900 seconds for charger {charge_point_id}"
-                )
-            else:
-                logging.error(
-                    f"Failed to set HeartbeatInterval for charger {charge_point_id}: {response}"
-                )
-
-        except Exception as e:
-            logging.error(f"Exception while sending HeartbeatInterval change: {e}")
-
-    async def send_sampled_metervalues_interval_change(self, charge_point_id: str):
-        try:
-            logging.info(
-                f"Sending SampledMeterValueInterval change to {charge_point_id}"
-            )
-            response = await self.send_request(
-                charge_point_id=charge_point_id,
-                request_method="change_configuration",
-                key="MeterValueSampleInterval",
-                value="60",
-            )
-
-            if response.status == "Accepted":
-                logging.info(
-                    f"Successfully set MeterValueSampleInterval to 60 seconds for charger {charge_point_id}"
-                )
-            else:
-                logging.error(
-                    f"Failed to set MeterValueSampleInterval for charger {charge_point_id}: {response}"
-                )
-
-        except Exception as e:
-            logging.error(
-                f"Exception while sending MeterValueSampleInterval change: {e}"
-            )
-
     async def enforce_remote_only_mode(self, charge_point_id: str):
         try:
-            config_patch = [
-                ("AuthorizeRemoteTxRequests", "true"),
-                ("LocalAuthorizeOffline", "false"),
-                ("LocalPreAuthorize", "false"),
-                ("AuthorizationCacheEnabled", "false"),
-                ("AllowOfflineTxForUnknownId", "false"),
-                ("StopTransactionOnInvalidId", "true"),
-                (
-                    "ChargePointAuthEnable",
-                    "true",
-                ),
-                ("FreevendEnabled", "false")
-            ]
+            # Desired configuration values
+            desired_config = {
+                "HeartbeatInterval": "30",
+                "MeterValueSampleInterval": "60",
+                "AuthorizeRemoteTxRequests": "true",
+                "LocalAuthorizeOffline": "false",
+                "LocalPreAuthorize": "false",
+                "AuthorizationCacheEnabled": "false",
+                "AllowOfflineTxForUnknownId": "false",
+                "StopTransactionOnInvalidId": "true",
+                "ChargePointAuthEnable": "true",
+                "FreevendEnabled": "false"
+            }
 
-            for key, value in config_patch:
-                logging.info(
-                    f"[ConfigSync] Setting {key} = {value} for {charge_point_id}"
-                )
+            # Fetch current configuration
+            current_config_resp = await self.send_request(
+                charge_point_id=charge_point_id,
+                request_method="get_configuration"
+            )
+
+            # Extract config list
+            if hasattr(current_config_resp, "configuration_key"):
+                raw_config_list = current_config_resp.configuration_key
+            elif isinstance(current_config_resp, dict) and "configuration_key" in current_config_resp:
+                raw_config_list = current_config_resp["configuration_key"]
+            else:
+                logging.warning(f"[ConfigSync] Could not parse configuration response from {charge_point_id}")
+                return
+
+            # Map current config into dict for comparison
+            current_config = {
+                entry["key"]: entry.get("value")
+                for entry in raw_config_list
+                if entry.get("key") is not None
+            }
+
+            for key, desired_value in desired_config.items():
+                existing_value = current_config.get(key)
+
+                if existing_value is None:
+                    logging.warning(f"[ConfigSync] Key '{key}' not found on charger {charge_point_id}, skipping.")
+                    continue
+
+                if str(existing_value).strip() == desired_value:
+                    logging.info(f"[ConfigSync] '{key}' already correct on {charge_point_id}, skipping.")
+                    continue
+
+                logging.info(f"[ConfigSync] Updating '{key}' from '{existing_value}' → '{desired_value}' on {charge_point_id}")
+
                 response = await self.send_request(
                     charge_point_id=charge_point_id,
                     request_method="change_configuration",
                     key=key,
-                    value=value,
+                    value=desired_value
                 )
 
-                if response.status == "Accepted":
-                    logging.info(f"[ConfigSync] Applied {key} for {charge_point_id}")
+                if hasattr(response, "status") and response.status == "Accepted":
+                    logging.info(f"[ConfigSync] Applied {key} = {desired_value} on {charge_point_id}")
                 else:
                     logging.warning(
-                        f"[ConfigSync] Rejected: {key} for {charge_point_id} — response: {response.status}"
+                        f"[ConfigSync] Failed to apply {key} on {charge_point_id}: {getattr(response, 'status', response)}"
                     )
+            
+            logging.info(f"[ConfigSync] Finished for {charge_point_id}. Final config:")
+            for k, v in desired_config.items():
+                logging.info(f"  - {k} = {current_config.get(k, 'MISSING')} → intended: {v}")
 
         except Exception as e:
-            logging.error(f"[ConfigSync] Failed to enforce remote-only mode: {e}")
+            logging.error(f"[ConfigSync] Exception during config sync for {charge_point_id}: {e}")
+
 
     async def get_charger_data(self):
         """
