@@ -72,15 +72,17 @@ class Transaction(BaseModel):
     charger_id = CharField()
     connector_id = IntegerField()
     meter_start = FloatField()
-    meter_stop = FloatField()
-    total_consumption = FloatField()  # You can manually compute this in your code
+    meter_stop = FloatField(null=True)
+    total_consumption = FloatField(null=True)
     start_time = DateTimeField()
-    stop_time = DateTimeField()
+    stop_time = DateTimeField(null=True)
     id_tag = CharField()
-
+    transaction_id = IntegerField(unique=True, null=True)
+    
     class Meta:
         table_name = "transactions"
-        indexes = ((("charger_id", "connector_id"), False),)
+        indexes = ((("charger_id", "connector_id", "id_tag"), False),)
+
 
 
 class Reservation(BaseModel):

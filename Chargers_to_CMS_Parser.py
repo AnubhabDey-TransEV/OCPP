@@ -73,61 +73,132 @@ def convert_to_ist(original_time):
         return original_time
 
 
+# def insert_data(data):
+#     existing_columns = get_existing_columns()
+#     logging.debug(f"Existing columns: {existing_columns}")
+#     logging.debug(f"Data to insert: {data}")
+
+#     # Add payload column if necessary
+#     if "payload" in data and "payload" not in existing_columns:
+#         add_column("payload", "string")
+
+#     # Flatten the data for non-JSON messages
+#     if "payload" not in data:
+#         data = flatten_dict(data)
+
+#     # Convert all datetime fields to IST
+#     for key, value in data.items():
+#         if isinstance(value, str):
+#             try:
+#                 parsed_time = datetime.fromisoformat(
+#                     value.replace("Z", "+00:00")
+#                 )
+#                 data[key] = convert_to_ist(parsed_time)
+#             except ValueError:
+#                 pass
+#         elif isinstance(value, datetime):
+#             data[key] = convert_to_ist(value)
+
+#     # Serialize data values that are dicts or lists
+#     for key, value in data.items():
+#         if isinstance(value, (dict, list)) and key != "payload":
+#             data[key] = json.dumps(value)
+
+#     # Add columns dynamically if they do not exist
+#     for key, value in data.items():
+#         if key not in existing_columns:
+#             if isinstance(value, str):
+#                 add_column(key, "string")
+#             elif isinstance(value, int):
+#                 add_column(key, "integer")
+#             elif isinstance(value, float):
+#                 add_column(key, "float")
+#             elif isinstance(value, datetime):
+#                 add_column(key, "datetime")
+
+#     existing_columns = get_existing_columns()  # refresh after adding new ones
+
+#     # Ensure the columns are ordered correctly
+#     columns = ", ".join([f"`{col}`" for col in data.keys()])
+#     placeholders = ", ".join(["%s"] * len(data))
+#     values = list(data.values())
+
+#     # Build the insert query
+#     query = f"INSERT INTO Charger_to_CMS ({columns}) VALUES ({placeholders})"
+#     logging.debug(f"Executing query: {query}")
+#     logging.debug(f"With values: {values}")
+
+#     # Execute the insert query
+#     db.execute_sql(query, values)
+
 def insert_data(data):
     existing_columns = get_existing_columns()
-    logging.debug(f"Existing columns: {existing_columns}")
-    logging.debug(f"Data to insert: {data}")
+    print(f"Existing columns: {existing_columns}")
+    print(f"Data to insert (pre-flatten): {data}")
 
-    # Add payload column if necessary
-    if "payload" in data and "payload" not in existing_columns:
-        add_column("payload", "string")
-
-    # Flatten the data for non-JSON messages
+    # Flatten if no payload (payloads are raw dumps)
     if "payload" not in data:
         data = flatten_dict(data)
 
-    # Convert all datetime fields to IST
+    # Convert datetime strings to IST datetime objects
     for key, value in data.items():
         if isinstance(value, str):
             try:
-                parsed_time = datetime.fromisoformat(
-                    value.replace("Z", "+00:00")
-                )
+                parsed_time = datetime.fromisoformat(value.replace("Z", "+00:00"))
                 data[key] = convert_to_ist(parsed_time)
             except ValueError:
                 pass
         elif isinstance(value, datetime):
             data[key] = convert_to_ist(value)
 
-    # Serialize data values that are dicts or lists
+    # Serialize dicts/lists (unless it's the raw payload)
     for key, value in data.items():
         if isinstance(value, (dict, list)) and key != "payload":
             data[key] = json.dumps(value)
 
-    # Add columns dynamically if they do not exist
+    # Try adding missing columns dynamically
     for key, value in data.items():
         if key not in existing_columns:
-            if isinstance(value, str):
-                add_column(key, "string")
-            elif isinstance(value, int):
-                add_column(key, "integer")
-            elif isinstance(value, float):
-                add_column(key, "float")
-            elif isinstance(value, datetime):
-                add_column(key, "datetime")
+            try:
+                if isinstance(value, str):
+                    add_column(key, "string")
+                elif isinstance(value, int):
+                    add_column(key, "integer")
+                elif isinstance(value, float):
+                    add_column(key, "float")
+                elif isinstance(value, datetime):
+                    add_column(key, "datetime")
+                else:
+                    print(f"Skipped column '{key}' — unsupported type: {type(value)}")
+            except Exception as e:
+                print(f"Could not add column '{key}' — Reason: {str(e)}")
 
-    # Ensure the columns are ordered correctly
-    columns = ", ".join([f"`{col}`" for col in data.keys()])
-    placeholders = ", ".join(["%s"] * len(data))
-    values = list(data.values())
+    # Refresh after attempting column adds
+    existing_columns = get_existing_columns()
 
-    # Build the insert query
+    # Filter data to include only columns that actually exist
+    filtered_data = {}
+    for k, v in data.items():
+        if k in existing_columns:
+            filtered_data[k] = v
+        else:
+            print(f"Column '{k}' not found in DB after ALTER attempt — dropping from insert")
+
+    # Prepare insert query
+    columns = ", ".join([f"`{col}`" for col in filtered_data.keys()])
+    placeholders = ", ".join(["%s"] * len(filtered_data))
+    values = list(filtered_data.values())
     query = f"INSERT INTO Charger_to_CMS ({columns}) VALUES ({placeholders})"
-    logging.debug(f"Executing query: {query}")
-    logging.debug(f"With values: {values}")
+    print(f"Final Insert Query: {query}")
+    print(f"With Values: {values}")
 
-    # Execute the insert query
-    db.execute_sql(query, values)
+    # Execute the insert
+    try:
+        db.execute_sql(query, values)
+    except Exception as e:
+        print(f"INSERT failed hard: {e}")
+        raise
+
 
 
 def get_ist_time():

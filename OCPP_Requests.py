@@ -1,10 +1,11 @@
 import logging
 from datetime import datetime
-
+import uuid
 from ocpp.routing import on
 from ocpp.v16 import ChargePoint as CP
 from ocpp.v16 import call, call_result
-
+import random
+from peewee import DoesNotExist
 import Chargers_to_CMS_Parser as parser_c2c
 import CMS_to_Charger_Parser as parser_ctc
 from models import Transaction
@@ -147,30 +148,50 @@ class ChargePoint(CP):
         )
         return response
 
+    def generate_unique_transaction_id(self):
+        MIN_ID = 1
+        MAX_ID = 2_147_483_647
+        MAX_ATTEMPTS = 10_000
+
+        attempts = 0
+        while attempts < MAX_ATTEMPTS:
+            tid = random.randint(MIN_ID, MAX_ID)
+            try:
+                Transaction.get(Transaction.transaction_id == tid)
+                attempts += 1  # Found = already exists = try again
+            except DoesNotExist:
+                return tid
+
+        raise Exception("⚠️ Failed to generate unique transaction ID after 10k tries. RNGesus abandoned you.")
+
     @on("StartTransaction")
     async def on_start_transaction(self, **kwargs):
         logging.debug(f"Received StartTransaction with kwargs: {kwargs}")
-        # self.mark_as_online()
-        transaction_id = kwargs.get("transaction_id")
+        
         connector_id = kwargs.get("connector_id")
         id_tag = kwargs.get("id_tag")
         meter_start = kwargs.get("meter_start")
+
+        transaction_id = self.generate_unique_transaction_id()
+        kwargs["transaction_id"] = transaction_id  # inject into everything downstream
+
+        # Store the original request
         parser_c2c.parse_and_store_start_transaction(self.charger_id, **kwargs)
 
-        # Create a new transaction record
+        # Create DB transaction record
         transaction_record = Transaction.create(
             charger_id=self.charger_id,
             connector_id=connector_id,
             meter_start=meter_start,
             start_time=datetime.now(),
             id_tag=id_tag,
+            transaction_id=transaction_id,
         )
+
         self.update_transaction_id(connector_id, transaction_id)
-        # Store the transaction record ID in the connector state if needed
-        self.state["connectors"][connector_id]["transaction_record_id"] = (
-            transaction_record.id
-        )
+        self.state["connectors"][connector_id]["transaction_record_id"] = transaction_record.id
         self.state["status"] = "Active"
+
         self.update_connector_state(
             connector_id,
             status="Charging",
@@ -178,9 +199,13 @@ class ChargePoint(CP):
             transaction_id=transaction_id,
         )
 
+        # Return to charger (must be int!)
         response = call_result.StartTransaction(
-            transaction_id=transaction_id, id_tag_info={"status": "Accepted"}
+            transaction_id=transaction_id,
+            id_tag_info={"status": "Accepted"}
         )
+
+        # Log ACK to CMS DB
         parser_ctc.parse_and_store_acknowledgment(
             self.charger_id,
             "StartTransaction",
@@ -190,7 +215,9 @@ class ChargePoint(CP):
             transaction_id=transaction_id,
             status="Accepted",
         )
+
         return response
+
 
     @on("StopTransaction")
     async def on_stop_transaction(self, **kwargs):
@@ -242,19 +269,31 @@ class ChargePoint(CP):
     @on("MeterValues")
     async def on_meter_values(self, **kwargs):
         logging.debug(f"Received MeterValues with kwargs: {kwargs}")
-        # self.mark_as_online()
         connector_id = kwargs.get("connector_id")
         transaction_id = kwargs.get("transaction_id")
         meter_values = kwargs.get("meter_value", [])
         parser_c2c.parse_and_store_meter_values(self.charger_id, **kwargs)
 
         if meter_values:
-            last_meter_value = meter_values[-1]
-            self.update_connector_state(
-                connector_id,
-                meter_value=last_meter_value,
-                transaction_id=transaction_id,
-            )
+            last_entry = meter_values[-1]
+            sampled_values = last_entry.get("sampledValue", [])
+            if sampled_values:
+                # Assume first value is the one we care about (common in OCPP)
+                try:
+                    value_str = sampled_values[0].get("value")
+                    last_meter_value = float(value_str)
+                except (TypeError, ValueError) as e:
+                    logging.error(f"Failed to parse meter value: {value_str} | {e}")
+                    last_meter_value = None
+            else:
+                last_meter_value = None
+
+            if last_meter_value is not None:
+                self.update_connector_state(
+                    connector_id,
+                    meter_value=last_meter_value,
+                    transaction_id=transaction_id,
+                )
 
         response = call_result.MeterValues()
         parser_ctc.parse_and_store_acknowledgment(
@@ -265,6 +304,7 @@ class ChargePoint(CP):
             connector_id=connector_id,
         )
         return response
+
 
     @on("StatusNotification")
     async def on_status_notification(self, **kwargs):

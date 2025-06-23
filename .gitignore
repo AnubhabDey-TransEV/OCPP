@@ -5,3 +5,4 @@ QRCodes
 *.zip
 dbcert.pem
 venv
+scripts
