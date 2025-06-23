@@ -223,29 +223,47 @@ class ChargePoint(CP):
     async def on_stop_transaction(self, **kwargs):
         logging.debug(f"Received StopTransaction with kwargs: {kwargs}")
         # self.mark_as_online()
+
         connector_id = kwargs.get("connector_id")
         transaction_id = kwargs.get("transaction_id")
         meter_stop = kwargs.get("meter_stop")
 
-        # Retrieve the transaction record ID from the connector state
-        transaction_record_id = self.state["connectors"][connector_id].get(
-            "transaction_record_id"
-        )
-        if transaction_record_id:
-            # Update the transaction record with stop meter value and total consumption
-            transaction_record = Transaction.get_by_id(transaction_record_id)
-            transaction_record.meter_stop = meter_stop
-            transaction_record.stop_time = datetime.now()
-            transaction_record.total_consumption = (
-                meter_stop - transaction_record.meter_start
-            ) / 1000
-            transaction_record.save()
+        # 🔍 Fallback: resolve connector_id from state using transaction_id
+        if connector_id is None:
+            for cid, state in self.state["connectors"].items():
+                if state.get("transaction_id") == transaction_id:
+                    connector_id = cid
+                    break
 
-            await send_charging_session_transaction_data_to_applicaton_layer(
-                transaction_record
+        if connector_id is None:
+            logging.error(
+                f"[{self.charger_id}] 🔥 Failed to resolve connector_id for transaction_id={transaction_id}"
             )
+            return call_result.StopTransaction(id_tag_info={"status": "Rejected"})
 
+        # ✅ Retrieve transaction record ID
+        transaction_record_id = self.state["connectors"][connector_id].get("transaction_record_id")
+
+        if transaction_record_id:
+            try:
+                transaction_record = Transaction.get_by_id(transaction_record_id)
+                transaction_record.meter_stop = meter_stop
+                transaction_record.stop_time = datetime.now()
+                transaction_record.total_consumption = (
+                    meter_stop - transaction_record.meter_start
+                ) / 1000  # convert Wh to kWh
+                transaction_record.save()
+
+                await send_charging_session_transaction_data_to_applicaton_layer.post_transaction_to_app(
+                    transaction_record
+                )
+            except Exception as e:
+                logging.error(f"[{self.charger_id}] 💀 Error updating transaction record: {e}")
+
+        # 📦 Store raw message
         parser_c2c.parse_and_store_stop_transaction(self.charger_id, **kwargs)
+
+        # 🔄 State update
         self.state["status"] = "Inactive"
         self.update_connector_state(
             connector_id,
@@ -254,6 +272,7 @@ class ChargePoint(CP):
             transaction_id=None,
         )
 
+        # ✅ Acknowledge to charger
         response = call_result.StopTransaction(id_tag_info={"status": "Accepted"})
         parser_ctc.parse_and_store_acknowledgment(
             self.charger_id,
