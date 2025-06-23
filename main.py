@@ -63,6 +63,7 @@ from wallet_methods import (
     recharge_wallet,
 )
 from fastapi.middleware.gzip import GZipMiddleware
+from send_transaction_to_be import start_worker, shutdown_worker
 
 CHARGER_DATA_KEY = "charger_data_cache"
 CACHE_EXPIRY = 7200  # Cache TTL in seconds (2 hours)  # Cache for 2 hours
@@ -113,6 +114,8 @@ async def lifespan(app: FastAPI):
         print("🔄 DB heartbeat task started.")
         app.state.inactivity_watchdog_task = asyncio.create_task(central_system.periodic_inactivity_watchdog())
         print("Charger inactivity watchdog started.")
+        start_worker()
+        print("Service to send transaction data to BE started successfully.")
 
     except Exception as e:
         print(f"❌ Exception during startup: {e}")
@@ -161,6 +164,12 @@ async def lifespan(app: FastAPI):
             print("✅ verification_failures cleared.")
         except Exception as e:
             print(f"⚠️ Failed to clear verification_failures: {e}")
+
+        try:
+            await shutdown_worker()
+            print("Worker to send transaction data to BE shutdown")
+        except Exception as e:
+            print("Worker to send transaction data to BE couldn't be shut down: {e}")
 
     except Exception as e:
         print(f"❌ Error during shutdown: {e}")

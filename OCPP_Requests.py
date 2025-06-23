@@ -10,6 +10,7 @@ import Chargers_to_CMS_Parser as parser_c2c
 import CMS_to_Charger_Parser as parser_ctc
 from models import Transaction
 from utils.methods import send_charging_session_transaction_data_to_applicaton_layer
+from send_transaction_to_be import add_to_queue
 
 
 class ChargePoint(CP):
@@ -257,6 +258,7 @@ class ChargePoint(CP):
                 await send_charging_session_transaction_data_to_applicaton_layer.post_transaction_to_app(
                     transaction_record
                 )
+                add_to_queue(transaction_record.uuiddb)
             except Exception as e:
                 logging.error(f"[{self.charger_id}] 💀 Error updating transaction record: {e}")
 
