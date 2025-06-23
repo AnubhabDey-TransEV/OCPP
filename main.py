@@ -124,6 +124,44 @@ async def lifespan(app: FastAPI):
     try:
         valkey_client.delete(CHARGER_DATA_KEY)
         print("🧼 Cache cleared on shutdown.")
+
+        for ws in central_system.active_connections.values():
+            try:
+                await ws.close(code=1001, reason="Server shutdown")
+                print("✅ WebSocket closed on shutdown.")
+            except Exception as e:
+                print(f"⚠️ Error closing WebSocket during shutdown: {e}")
+
+        try:
+            central_system.active_connections.clear()
+            print("✅ active_connections cleared.")
+        except Exception as e:
+            print(f"⚠️ Failed to clear active_connections: {e}")
+
+        try:
+            central_system.charge_points.clear()
+            print("✅ charge_points cleared.")
+        except Exception as e:
+            print(f"⚠️ Failed to clear charge_points: {e}")
+
+        try:
+            central_system.frontend_connections.clear()
+            print("✅ frontend_connections cleared.")
+        except Exception as e:
+            print(f"⚠️ Failed to clear frontend_connections: {e}")
+
+        try:
+            central_system.pending_start_transactions.clear()
+            print("✅ pending_start_transactions cleared.")
+        except Exception as e:
+            print(f"⚠️ Failed to clear pending_start_transactions: {e}")
+
+        try:
+            central_system.verification_failures.clear()
+            print("✅ verification_failures cleared.")
+        except Exception as e:
+            print(f"⚠️ Failed to clear verification_failures: {e}")
+
     except Exception as e:
         print(f"❌ Error during shutdown: {e}")
 
