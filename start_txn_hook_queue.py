@@ -4,30 +4,31 @@ import json
 import os
 from datetime import datetime, timedelta
 from typing import Dict
-from models import Transaction  # Peewee model
 from decouple import config
 
-# File paths
-LIVE_FILE = "live_queue.jsonl"
-FAILED_FILE = "failed.jsonl"
-FATAL_FILE = "fatal_queue.jsonl"
+# === FILE PATHS ===
+LIVE_FILE = "start_txn_live_queue.jsonl"
+FAILED_FILE = "start_txn_failed.jsonl"
+FATAL_FILE = "start_txn_fatal_queue.jsonl"
 
-# Constants
-RETRY_BASE_INTERVAL = 60  # seconds
-MAX_RETRIES = 10
-BACKEND_URL = "https://be.ocpp.cms.transev.site/users/deductcalculate"
+# === CONFIG ===
+RETRY_BASE_INTERVAL = 30  # seconds
+MAX_RETRIES = 6
+HOOK_URL = "https://be.ocpp.cms.transev.site/users/checkstartresponse"
 apiauthkey = config("APIAUTHKEY")
 
-# Worker state
+# === STATE ===
 _worker_task = None
 _shutdown_event = asyncio.Event()
 
+# === IN-MEMORY STORAGE (this is your real-time energy limit store) ===
+# Maps transaction_id → max_kwh (float)
+max_energy_limits = {}  # <- This is what you read from ocpprequests.py
 
-# ==== FILE I/O ====
+# === FILE I/O ===
 def append_jsonl(path: str, obj: Dict):
     with open(path, "a") as f:
         f.write(json.dumps(obj) + "\n")
-
 
 def read_jsonl(path: str):
     if not os.path.exists(path):
@@ -35,89 +36,57 @@ def read_jsonl(path: str):
     with open(path, "r") as f:
         return [json.loads(line) for line in f if line.strip()]
 
-
 def write_jsonl(path: str, objects: list):
     with open(path, "w") as f:
         for obj in objects:
             f.write(json.dumps(obj) + "\n")
 
-
-# ==== TASK INTERFACE ====
-def add_to_queue(uuiddb: str):
+# === INTERFACE ===
+def add_to_start_hook_queue(payload: Dict):
     task = {
-        "uuiddb": uuiddb,
+        "payload": payload,
         "retries": 0,
         "next_retry": datetime.now().isoformat()
     }
     current = read_jsonl(LIVE_FILE)
-    if any(t["uuiddb"] == uuiddb for t in current):
+    if any(t["payload"]["transactionid"] == payload["transactionid"] for t in current):
         return
     append_jsonl(LIVE_FILE, task)
-    print(f"[QUEUE 📥] Queued {uuiddb}")
-
+    print(f"[HOOK QUEUE 📥] Queued StartTransaction hook for TX {payload['transactionid']}")
 
 def log_fatal(task: Dict, reason: str):
     task["fatal_reason"] = reason
     task["logged_at"] = datetime.now().isoformat()
     append_jsonl(FATAL_FILE, task)
-    print(f"[☠️] Logged fatal task {task.get('uuiddb', 'unknown')} – {reason}")
+    print(f"[☠️] Fatal hook task TX {task.get('payload', {}).get('transactionid', 'unknown')} – {reason}")
 
-
-def serialize_transaction(tx: Transaction) -> Dict:
-    return {
-        "sessionid": str(tx.transaction_id),
-        "chargerid": tx.charger_id,
-        "starttime": tx.start_time.isoformat(),
-        "stoptime": tx.stop_time.isoformat() if tx.stop_time else None,
-        "userid": tx.id_tag,
-        "meterstart": str(tx.meter_start),
-        "meterstop": str(tx.meter_stop),
-        "consumedkwh": str(tx.total_consumption)
-    }
-
-
-# ==== RETRY HANDLER ====
-async def try_post(uuiddb: str):
+# === RETRY POST ===
+async def try_post_hook(payload: Dict):
     try:
-        tx = Transaction.get(Transaction.uuiddb == uuiddb)
-
-        # Fatal: bad/missing data
-        if tx.stop_time is None:
-            log_fatal({"uuiddb": uuiddb}, "Missing stop_time")
-            return "fatal"
-        if tx.total_consumption is None or tx.total_consumption <= 0:
-            log_fatal({"uuiddb": uuiddb}, f"Invalid kWh: {tx.total_consumption}")
-            return "fatal"
-        if tx.meter_start is None or tx.meter_stop is None:
-            log_fatal({"uuiddb": uuiddb}, "Missing meter readings")
-            return "fatal"
-
-        try:
-            data = serialize_transaction(tx)
-        except Exception as e:
-            log_fatal({"uuiddb": uuiddb}, f"Serialization error: {e}")
-            return "fatal"
-
         headers = {"apiauthkey": apiauthkey}
-
         async with httpx.AsyncClient() as client:
-            resp = await client.post(BACKEND_URL, json=data, headers=headers, timeout=10)
+            resp = await client.post(HOOK_URL, json=payload, headers=headers, timeout=10)
 
         if resp.status_code >= 500:
             raise Exception(f"Server error: {resp.status_code}")
         elif resp.status_code >= 400:
-            log_fatal({"uuiddb": uuiddb}, f"HTTP {resp.status_code}: {resp.text}")
+            log_fatal({"payload": payload}, f"HTTP {resp.status_code}: {resp.text}")
             return "fatal"
 
-        print(f"[✅] Sent {uuiddb}")
+        data = resp.json()
+        if "max_kwh" not in data:
+            log_fatal({"payload": payload}, f"No max_kwh in response: {data}")
+            return "fatal"
+
+        max_energy_limits[payload["transactionid"]] = float(data["max_kwh"])
+        print(f"[✅] Hook acknowledged for TX {payload['transactionid']} — max_kwh={data['max_kwh']}")
         return True
 
     except Exception as e:
-        print(f"[❌] Retryable failure for {uuiddb}: {e}")
+        print(f"[❌] Retryable failure for TX {payload['transactionid']}: {e}")
         return False
 
-
-# ==== QUEUE LOOP ====
+# === MAIN LOOP ===
 async def process_live_queue():
     while not _shutdown_event.is_set():
         live = read_jsonl(LIVE_FILE)
@@ -127,7 +96,7 @@ async def process_live_queue():
         for entry in live:
             retry_time = datetime.fromisoformat(entry["next_retry"])
             if now >= retry_time:
-                result = await try_post(entry["uuiddb"])
+                result = await try_post_hook(entry["payload"])
                 if result == True:
                     continue
                 elif result == "fatal":
@@ -136,7 +105,7 @@ async def process_live_queue():
                     entry["retries"] += 1
                     if entry["retries"] >= MAX_RETRIES:
                         append_jsonl(FAILED_FILE, entry)
-                        print(f"[💀] Max retries exceeded for {entry['uuiddb']}")
+                        print(f"[💀] Max retries exceeded for TX {entry['payload']['transactionid']}")
                         continue
                     backoff = RETRY_BASE_INTERVAL * (2 ** (entry["retries"] - 1))
                     entry["next_retry"] = (now + timedelta(seconds=backoff)).isoformat()
@@ -148,14 +117,13 @@ async def process_live_queue():
         except asyncio.TimeoutError:
             pass
 
-
 async def retry_failed_queue():
     while not _shutdown_event.is_set():
         failed = read_jsonl(FAILED_FILE)
         still_failed = []
 
         for entry in failed:
-            result = await try_post(entry["uuiddb"])
+            result = await try_post_hook(entry["payload"])
             if result != True:
                 still_failed.append(entry)
 
@@ -165,26 +133,23 @@ async def retry_failed_queue():
         except asyncio.TimeoutError:
             pass
 
-
-# ==== LIFECYCLE ====
+# === BOOTSTRAP ===
 async def _worker_loop():
-    print("[QUEUE 🔁] Background worker running...")
+    print("[HOOK QUEUE 🔁] Background hook worker running...")
     await asyncio.gather(
         process_live_queue(),
         retry_failed_queue()
     )
 
-
-def start_worker():
+def start_hook_worker():
     global _worker_task
     if _worker_task is None:
         _worker_task = asyncio.create_task(_worker_loop())
-        print("[QUEUE 🚀] Worker launched.")
+        print("[HOOK QUEUE 🚀] Hook worker launched.")
 
-
-async def shutdown_worker():
-    print("[QUEUE 🛑] Shutting down...")
+async def shutdown_hook_worker():
+    print("[HOOK QUEUE 🛑] Shutting down hook worker...")
     _shutdown_event.set()
     if _worker_task:
         await _worker_task
-    print("[QUEUE ✅] Clean shutdown complete.")
+    print("[HOOK QUEUE ✅] Clean shutdown complete.")

@@ -5,12 +5,13 @@ from ocpp.routing import on
 from ocpp.v16 import ChargePoint as CP
 from ocpp.v16 import call, call_result
 import random
-from peewee import DoesNotExist
+from peewee import DoesNotExist, fn
 import Chargers_to_CMS_Parser as parser_c2c
 import CMS_to_Charger_Parser as parser_ctc
 from models import Transaction
 from utils.methods import send_charging_session_transaction_data_to_applicaton_layer
 from send_transaction_to_be import add_to_queue
+from start_txn_hook_queue import add_to_start_hook_queue, max_energy_limits
 
 
 class ChargePoint(CP):
@@ -206,6 +207,13 @@ class ChargePoint(CP):
             id_tag_info={"status": "Accepted"}
         )
 
+        add_to_start_hook_queue({
+        "transactionid": str(transaction_id),
+        "userid": id_tag,
+        "chargerid": self.charger_id,
+        "connectorid": str(connector_id)
+        })
+
         # Log ACK to CMS DB
         parser_ctc.parse_and_store_acknowledgment(
             self.charger_id,
@@ -259,6 +267,10 @@ class ChargePoint(CP):
                     transaction_record
                 )
                 add_to_queue(transaction_record.uuiddb)
+                if transaction_id in max_energy_limits:
+                    del max_energy_limits[transaction_id]
+                    logging.debug(f"[🧹] Cleared max_kWh limit for TX {transaction_id}")
+
             except Exception as e:
                 logging.error(f"[{self.charger_id}] 💀 Error updating transaction record: {e}")
 
@@ -315,6 +327,28 @@ class ChargePoint(CP):
                     meter_value=last_meter_value,
                     transaction_id=transaction_id,
                 )
+            try:
+                limit_kwh = max_energy_limits.get(transaction_id)
+                if limit_kwh is not None:
+                    tx = Transaction.get(
+                        (Transaction.charger_id == self.charger_id) &
+                        (Transaction.transaction_id == transaction_id)
+                    )
+
+                    if tx.meter_start is not None:
+                        consumed_kwh = (last_meter_value - tx.meter_start) / 1000.0
+
+                        logging.debug(
+                            f"[Limit Check] TX {transaction_id} — Consumed: {consumed_kwh:.3f} / {limit_kwh:.3f} kWh"
+                        )
+
+                        if consumed_kwh >= (limit_kwh - 0.05):  # small buffer
+                            logging.warning(
+                                f"[⚡️ CUTOFF] TX {transaction_id} exceeded limit — triggering RemoteStop"
+                            )
+                            await self.call(call.RemoteStopTransaction(transaction_id=transaction_id))
+            except Exception as e:
+                logging.error(f"Limit enforcement failed for TX {transaction_id}: {e}")
 
         response = call_result.MeterValues()
         parser_ctc.parse_and_store_acknowledgment(

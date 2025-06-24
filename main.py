@@ -64,6 +64,7 @@ from wallet_methods import (
 )
 from fastapi.middleware.gzip import GZipMiddleware
 from send_transaction_to_be import start_worker, shutdown_worker
+from start_txn_hook_queue import start_hook_worker, shutdown_hook_worker
 
 CHARGER_DATA_KEY = "charger_data_cache"
 CACHE_EXPIRY = 7200  # Cache TTL in seconds (2 hours)  # Cache for 2 hours
@@ -116,6 +117,8 @@ async def lifespan(app: FastAPI):
         print("Charger inactivity watchdog started.")
         start_worker()
         print("Service to send transaction data to BE started successfully.")
+        start_hook_worker()
+        print("Service to manageautocutoff data started")
 
     except Exception as e:
         print(f"❌ Exception during startup: {e}")
@@ -170,6 +173,12 @@ async def lifespan(app: FastAPI):
             print("Worker to send transaction data to BE shutdown")
         except Exception as e:
             print("Worker to send transaction data to BE couldn't be shut down: {e}")
+
+        try:
+            await shutdown_hook_worker()
+            print("Worker to manage charging autocutoff shutdown")
+        except Exception as e:
+            print("Worker to manage charging autocutoff couldn't be shut down: {e}")
 
     except Exception as e:
         print(f"❌ Error during shutdown: {e}")
@@ -364,7 +373,7 @@ class CentralSystem:
             # Desired configuration values
             desired_config = {
                 "HeartbeatInterval": "30",
-                "MeterValueSampleInterval": "60",
+                "MeterValueSampleInterval": "5",
                 "AuthorizeRemoteTxRequests": "true",
                 "LocalAuthorizeOffline": "false",
                 "LocalPreAuthorize": "false",
