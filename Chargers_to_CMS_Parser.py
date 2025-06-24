@@ -133,8 +133,6 @@ def convert_to_ist(original_time):
 
 def insert_data(data):
     existing_columns = get_existing_columns()
-    print(f"Existing columns: {existing_columns}")
-    print(f"Data to insert (pre-flatten): {data}")
 
     # Flatten if no payload (payloads are raw dumps)
     if "payload" not in data:
@@ -169,9 +167,9 @@ def insert_data(data):
                 elif isinstance(value, datetime):
                     add_column(key, "datetime")
                 else:
-                    print(f"Skipped column '{key}' — unsupported type: {type(value)}")
+                    print(f"[Chargers_to_CMS_Parser] Skipped column '{key}' — unsupported type: {type(value)}")
             except Exception as e:
-                print(f"Could not add column '{key}' — Reason: {str(e)}")
+                print(f"[Chargers_to_CMS_Parser] Could not add column '{key}' — Reason: {str(e)}")
 
     # Refresh after attempting column adds
     existing_columns = get_existing_columns()
@@ -189,14 +187,12 @@ def insert_data(data):
     placeholders = ", ".join(["%s"] * len(filtered_data))
     values = list(filtered_data.values())
     query = f"INSERT INTO Charger_to_CMS ({columns}) VALUES ({placeholders})"
-    print(f"Final Insert Query: {query}")
-    print(f"With Values: {values}")
 
     # Execute the insert
     try:
         db.execute_sql(query, values)
     except Exception as e:
-        print(f"INSERT failed hard: {e}")
+        print(f"[Chargers_to_CMS_Parser] INSERT failed hard: {e}")
         raise
 
 
