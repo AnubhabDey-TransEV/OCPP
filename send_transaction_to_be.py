@@ -15,7 +15,7 @@ FATAL_FILE = "fatal_queue.jsonl"
 # Constants
 RETRY_BASE_INTERVAL = 60  # seconds
 MAX_RETRIES = 10
-BACKEND_URL = "https://be.ocpp.cms.transev.site/users/deductcalculate"
+BACKEND_URL = "https://be.cms.ocpp.transev.site/users/deductcalculate"
 apiauthkey = config("APIAUTHKEY")
 
 # Worker state
@@ -104,7 +104,7 @@ async def try_post(uuiddb: str):
             resp = await client.post(BACKEND_URL, json=data, headers=headers, timeout=10)
 
         if resp.status_code >= 500:
-            raise Exception(f"Server error: {resp.status_code}")
+            raise Exception(f"[Send Completed Transaction Callback Hook]:\n Server error: {resp.status_code}\n{resp.text}")
         elif resp.status_code >= 400:
             log_fatal({"uuiddb": uuiddb}, f"HTTP {resp.status_code}: {resp.text}")
             return "fatal"

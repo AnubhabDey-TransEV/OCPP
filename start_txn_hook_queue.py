@@ -14,7 +14,7 @@ FATAL_FILE = "start_txn_fatal_queue.jsonl"
 # === CONFIG ===
 RETRY_BASE_INTERVAL = 30  # seconds
 MAX_RETRIES = 6
-HOOK_URL = "https://be.ocpp.cms.transev.site/users/checkstartresponse"
+HOOK_URL = "https://be.cms.ocpp.transev.site/users/checkstartresponse"
 apiauthkey = config("APIAUTHKEY")
 
 # === STATE ===
@@ -68,7 +68,7 @@ async def try_post_hook(payload: Dict):
             resp = await client.post(HOOK_URL, json=payload, headers=headers, timeout=10)
 
         if resp.status_code >= 500:
-            raise Exception(f"Server error: {resp.status_code}")
+            raise Exception(f"[Start Transaction Callback Hook]:\n Server error: {resp.status_code}:{resp.text}")
         elif resp.status_code >= 400:
             log_fatal({"payload": payload}, f"HTTP {resp.status_code}: {resp.text}")
             return "fatal"

@@ -970,17 +970,47 @@ async def options_stop_transaction():
     )
 
 
-@app.post("/api/stop_transaction")
-async def stop_transaction(request: StopTransactionRequest):
-    charge_point_id = request.uid
+# @app.post("/api/stop_transaction")
+# async def stop_transaction(request: StopTransactionRequest):
+#     charge_point_id = request.uid
 
+#     response = await central_system.send_request(
+#         charge_point_id=charge_point_id,
+#         request_method="remote_stop_transaction",
+#         transaction_id=request.transaction_id,
+#     )
+#     if isinstance(response, dict) and "error" in response:
+#         raise HTTPException(status_code=404, detail=response["error"])
+#     return {"status": response.status}
+
+
+@app.post("/api/stop_transaction")
+async def stop_transaction(request: Request):
+    data = await request.json()
+
+    # Extract required fields only
+    uid = data.get("uid")
+    txn_id_str = data.get("transaction_id")
+
+    if not uid or not txn_id_str:
+        raise HTTPException(status_code=400, detail="Missing uid or transaction_id")
+
+    # Parse and sanitize transaction_id
+    try:
+        transaction_id = int(str(txn_id_str).strip())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid transaction_id format")
+
+    # Proceed as before
     response = await central_system.send_request(
-        charge_point_id=charge_point_id,
+        charge_point_id=uid,
         request_method="remote_stop_transaction",
-        transaction_id=request.transaction_id,
+        transaction_id=transaction_id,
     )
+
     if isinstance(response, dict) and "error" in response:
         raise HTTPException(status_code=404, detail=response["error"])
+    
     return {"status": response.status}
 
 
