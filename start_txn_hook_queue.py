@@ -64,26 +64,43 @@ def log_fatal(task: Dict, reason: str):
 async def try_post_hook(payload: Dict):
     try:
         headers = {"apiauthkey": apiauthkey}
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(HOOK_URL, json=payload, headers=headers, timeout=10)
 
+        # ── 1. Build outbound JSON (tx id as str) ────────────────────
+        safe_payload = dict(payload)
+        safe_payload["transactionid"] = str(payload["transactionid"])
+
+        # ── 2. POST it ───────────────────────────────────────────────
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                HOOK_URL, json=safe_payload, headers=headers, timeout=10
+            )
+
+        # ── 3. Handle HTTP errors ───────────────────────────────────
         if resp.status_code >= 500:
-            raise Exception(f"[Start Transaction Callback Hook]:\n Server error: {resp.status_code}:{resp.text}")
+            raise Exception(
+                f"[Start Transaction Callback Hook]: "
+                f"Server error: {resp.status_code}:{resp.text}"
+            )
         elif resp.status_code >= 400:
             log_fatal({"payload": payload}, f"HTTP {resp.status_code}: {resp.text}")
             return "fatal"
 
+        # ── 4. Parse body & stash limit ─────────────────────────────
         data = resp.json()
         if "max_kwh" not in data:
             log_fatal({"payload": payload}, f"No max_kwh in response: {data}")
             return "fatal"
 
-        max_energy_limits[payload["transactionid"]] = float(data["max_kwh"])
-        print(f"[✅] Hook acknowledged for TX {payload['transactionid']} — max_kwh={data['max_kwh']}")
+        tx_id   = int(payload["transactionid"])      # ← define once
+        max_kwh = float(data["max_kwh"])             # ← define once
+        max_energy_limits[tx_id] = max_kwh
+
+        print(f"[✅] Hook acknowledged for TX {tx_id} — max_kwh={max_kwh}")
         return True
 
     except Exception as e:
-        print(f"[❌] Retryable failure for TX {payload['transactionid']}: {e}")
+        tx_id = payload.get("transactionid", "unknown")   # keep logs safe
+        print(f"[❌] Retryable failure for TX {tx_id}: {e}")
         return False
 
 # === MAIN LOOP ===

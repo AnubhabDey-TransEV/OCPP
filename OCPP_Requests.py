@@ -177,6 +177,8 @@ class ChargePoint(CP):
         transaction_id = self.generate_unique_transaction_id()
         kwargs["transaction_id"] = transaction_id  # inject into everything downstream
 
+        print(f"Transaction ID assigned: {transaction_id}")
+
         # Store the original request
         parser_c2c.parse_and_store_start_transaction(self.charger_id, **kwargs)
 
@@ -208,7 +210,7 @@ class ChargePoint(CP):
         )
 
         add_to_start_hook_queue({
-        "transactionid": str(transaction_id),
+        "transactionid": int(transaction_id),
         "userid": id_tag,
         "chargerid": self.charger_id,
         "connectorid": str(connector_id)
@@ -304,12 +306,14 @@ class ChargePoint(CP):
         logging.debug(f"Received MeterValues with kwargs: {kwargs}")
         connector_id = kwargs.get("connector_id")
         transaction_id = kwargs.get("transaction_id")
+        print(f"Transaction ID whose Meter Values I recieved: {transaction_id}")
         meter_values = kwargs.get("meter_value", [])
         parser_c2c.parse_and_store_meter_values(self.charger_id, **kwargs)
 
         if meter_values:
             last_entry = meter_values[-1]
-            sampled_values = last_entry.get("sampledValue", [])
+            sampled_values = last_entry.get("sampled_value", [])
+            print (f"Meter Values recieved: {sampled_values}")
             if sampled_values:
                 # Assume first value is the one we care about (common in OCPP)
                 try:
@@ -328,25 +332,35 @@ class ChargePoint(CP):
                     transaction_id=transaction_id,
                 )
             try:
-                limit_kwh = max_energy_limits.get(transaction_id)
+                limit_kwh = max_energy_limits.get(int(transaction_id))
+                if limit_kwh is None:
+                    print(f"🚫 No energy limit set for TX {transaction_id}")
+               
                 if limit_kwh is not None:
                     tx = Transaction.get(
                         (Transaction.charger_id == self.charger_id) &
-                        (Transaction.transaction_id == transaction_id)
+                        (Transaction.transaction_id == int(transaction_id))
                     )
+
+                    print(f"Found Transaction: {tx}")
 
                     if tx.meter_start is not None:
                         consumed_kwh = (last_meter_value - tx.meter_start) / 1000.0
 
-                        logging.debug(
+                        print(
                             f"[Limit Check] TX {transaction_id} — Consumed: {consumed_kwh:.3f} / {limit_kwh:.3f} kWh"
                         )
 
                         if consumed_kwh >= (limit_kwh - 0.05):  # small buffer
-                            logging.warning(
+                            print(
                                 f"[⚡️ CUTOFF] TX {transaction_id} exceeded limit — triggering RemoteStop"
                             )
-                            await self.call(call.RemoteStopTransaction(transaction_id=transaction_id))
+                            try:
+                                # await self.call(call.RemoteStopTransaction(transaction_id=transaction_id))
+                                response = await self.call(call.RemoteStopTransaction(transaction_id=transaction_id))
+                                print(f"[🟢 RemoteStop ACK] TX {transaction_id}: {response}")
+                            except Exception as e:
+                                print(f"Autocutoff failed, {e}")
             except Exception as e:
                 logging.error(f"Limit enforcement failed for TX {transaction_id}: {e}")
 
