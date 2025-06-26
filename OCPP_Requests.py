@@ -187,6 +187,7 @@ class ChargePoint(CP):
 
     @on("Authorize")
     async def on_authorize(self, **kwargs):
+        self.mark_as_online()
         logging.debug(f"Received Authorize request with kwargs: {kwargs}")
         id_tag = kwargs.get("id_tag")
 
@@ -267,6 +268,7 @@ class ChargePoint(CP):
 
     @on("StartTransaction")
     async def on_start_transaction(self, **kwargs):
+        self.mark_as_online()
         logging.debug(f"Received StartTransaction with kwargs: {kwargs}")
         
         connector_id = kwargs.get("connector_id")
@@ -345,6 +347,7 @@ class ChargePoint(CP):
 
     @on("StopTransaction")
     async def on_stop_transaction(self, **kwargs):
+        self.mark_as_online()
         logging.debug(f"Received StopTransaction with kwargs: {kwargs}")
         self.mark_as_online()
 
@@ -426,6 +429,7 @@ class ChargePoint(CP):
 
     @on("MeterValues")
     async def on_meter_values(self, **kwargs):
+        self.mark_as_online()
         logging.debug(f"Received MeterValues with kwargs: {kwargs}")
         connector_id = kwargs.get("connector_id")
         transaction_id = kwargs.get("transaction_id")
@@ -536,7 +540,7 @@ class ChargePoint(CP):
     async def on_status_notification(self, **kwargs):
         logging.debug(f"Received StatusNotification with kwargs: {kwargs}")
         error_code = kwargs.get("error_code", "NoError")
-        # self.mark_as_online(has_error=(error_code != 'NoError'))
+        self.mark_as_online(has_error=(error_code != 'NoError'))
         connector_id = kwargs.get("connector_id")
         status = kwargs.get("status")
         transaction_id = kwargs.get("transaction_id")
