@@ -1,6 +1,7 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
+import asyncio
 from ocpp.routing import on
 from ocpp.v16 import ChargePoint as CP
 from ocpp.v16 import call, call_result
@@ -23,12 +24,22 @@ class ChargePoint(CP):
         self.online = False  # Track if the charger is online
         self.has_error = False  # Track if the charger has an error
         self.last_message_time = (
-            datetime.now()
+            self.currdatetime()
         )  # Timestamp of the last received message
 
     def currdatetime(self):
-        curr = datetime.now()
-        return curr.isoformat()
+        return datetime.now(timezone.utc).isoformat()
+
+    def delta_wh(self, prev: float, curr: float, rollover: int = 4_294_967_295) -> float:
+        """
+        Energy delta (Wh) tolerant of counter wrap.
+        Works whether the value rolled zero, once, or never.
+        """
+        if prev is None:
+            return 0
+        ret = (curr-prev)%(rollover+1)
+        return float(ret)
+
 
     def update_connector_state(
         self,
@@ -45,6 +56,8 @@ class ChargePoint(CP):
                 "last_transaction_consumption_kwh": 0.0,  # Track last transaction consumption per connector
                 "error_code": "NoError",
                 "transaction_id": None,
+                "last_meter_received": None,
+                "watchdog_task": None,
             }
         if status:
             self.state["connectors"][connector_id]["status"] = status
@@ -58,7 +71,7 @@ class ChargePoint(CP):
                 ]
                 if initial_meter_value and meter_value:
                     consumption_kwh = (
-                        meter_value - initial_meter_value
+                        self.delta_wh(curr = float(meter_value), prev= float(initial_meter_value))
                     ) / 1000.0  # Convert Wh to kWh
                     self.state["connectors"][connector_id][
                         "last_transaction_consumption_kwh"
@@ -67,6 +80,7 @@ class ChargePoint(CP):
                         f"Connector {connector_id} last transaction consumed {consumption_kwh:.3f} kWh."
                     )
             self.state["connectors"][connector_id]["last_meter_value"] = meter_value
+            self.state["connectors"][connector_id]["last_meter_received"] = self.currdatetime()
         if error_code:
             self.state["connectors"][connector_id]["error_code"] = error_code
         if transaction_id is not None:
@@ -96,6 +110,75 @@ class ChargePoint(CP):
         if transaction_id is not None:
             self.update_connector_state(connector_id, transaction_id=transaction_id)
 
+    async def handle_boot_recovery(self):
+        """
+        Called right after BootNotification ACK.
+        Logic per connector:
+        • If a transaction_id is recorded:
+            – If charger reports status 'Available'  ➜  this is a GHOST session.
+                · Push its uuiddb to the normal add_to_queue() so CMS can close it cleanly.
+            – In every case, launch RemoteStop + Unlock retry loop to free the latch.
+        • If no transaction_id               ➜  just fire an UnlockConnector.
+        """
+        for cid, state in self.state["connectors"].items():
+            tx_id   = state.get("transaction_id")
+            status  = state.get("status", "Unknown")
+
+            if tx_id:
+                # ── Ghost-TX detector ───────────────────────────────────────────
+                if status == "Available":
+                    try:
+                        tx_row = Transaction.get(
+                            (Transaction.charger_id == self.charger_id) &
+                            (Transaction.transaction_id == int(tx_id))
+                        )
+                        logging.warning(
+                            f"[{self.charger_id}] 👻 Ghost TX {tx_id} on "
+                            f"connector {cid} — forwarding to CMS queue."
+                        )
+                        # Tell BE to treat it as 'ended'
+                        add_to_queue(tx_row.uuiddb)
+
+                    except Transaction.DoesNotExist:
+                        logging.error(
+                            f"[{self.charger_id}] No DB row for ghost TX {tx_id}"
+                        )
+                # ── Always try to clean latch afterward ────────────────────────
+                asyncio.create_task(self._remote_stop_and_unlock_loop(cid, tx_id))
+
+            else:
+                # No TX ⇒ simple unlock to ensure plug is free
+                asyncio.create_task(self.unlock_connector(cid))
+
+    async def _remote_stop_and_unlock_loop(
+            self,
+            connector_id: int,
+            transaction_id: int,
+            max_total_time: int = 300
+        ):
+        """Retry RemoteStop + Unlock until success or timeout."""
+        delay = 2
+        deadline = self.currdatetime().timestamp() + max_total_time
+
+        while self.currdatetime().timestamp() < deadline:
+            try:
+                stop_resp = await self.remote_stop_transaction(transaction_id)
+                if getattr(stop_resp, "status", None) == "Accepted":
+                    unlock_resp = await self.unlock_connector(connector_id)
+                    if getattr(unlock_resp, "status", None) == "Unlocked":
+                        # purge TX from RAM
+                        self.update_connector_state(connector_id, transaction_id=None, status="Available")
+                        self.state["connectors"][connector_id]["transaction_id"] = None
+                        logging.info(f"[{self.charger_id}] 🔓 Connector {connector_id} recovered after reboot.")
+                        return
+            except Exception as e:
+                logging.error(f"[{self.charger_id}] Recovery loop error: {e}")
+
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 60)
+
+        logging.error(f"[{self.charger_id}] ⏰ Failed to recover connector {connector_id} within {max_total_time}s.")
+
     # Inbound messages from chargers to CMS
 
     @on("Authorize")
@@ -122,21 +205,24 @@ class ChargePoint(CP):
 
     @on("BootNotification")
     async def on_boot_notification(self, **kwargs):
-        logging.debug(f"Received BootNotification with kwargs: {kwargs}")
-        # self.mark_as_online()
-        parser_c2c.parse_and_store_boot_notification(self.charger_id, **kwargs)
+        try:
+            logging.debug(f"Received BootNotification with kwargs: {kwargs}")
+            # self.mark_as_online()
+            parser_c2c.parse_and_store_boot_notification(self.charger_id, **kwargs)
 
-        response = call_result.BootNotification(
-            current_time=self.currdatetime(), interval=900, status="Accepted"
-        )
-        parser_ctc.parse_and_store_acknowledgment(
-            self.charger_id,
-            "BootNotification",
-            "BootNotification",
-            self.currdatetime(),
-            status="Accepted",
-        )
-        return response
+            response = call_result.BootNotification(
+                current_time=self.currdatetime(), interval=900, status="Accepted"
+            )
+            parser_ctc.parse_and_store_acknowledgment(
+                self.charger_id,
+                "BootNotification",
+                "BootNotification",
+                self.currdatetime(),
+                status="Accepted",
+            )
+            return response
+        finally:
+            asyncio.create_task(self.handle_boot_recovery())
 
     @on("Heartbeat")
     async def on_heartbeat(self, **kwargs):
@@ -150,21 +236,30 @@ class ChargePoint(CP):
         )
         return response
 
-    def generate_unique_transaction_id(self):
-        MIN_ID = 1
-        MAX_ID = 2_147_483_647
-        MAX_ATTEMPTS = 10_000
+    def generate_unique_transaction_id(self, max_attempts: int = 100) -> int:
+        """
+        Grab a 32-bit random int, immediately INSERT it to reserve ownership.
+        If another CP raced us, the UNIQUE constraint raises IntegrityError
+        and we retry with a new number.
+        """
+        for _ in range(max_attempts):
+            tid = random.randint(1, 2_147_483_647)
 
-        attempts = 0
-        while attempts < MAX_ATTEMPTS:
-            tid = random.randint(MIN_ID, MAX_ID)
             try:
-                Transaction.get(Transaction.transaction_id == tid)
-                attempts += 1  # Found = already exists = try again
-            except DoesNotExist:
-                return tid
+                # Write first, ask questions later → race-proof
+                Transaction.create(
+                    charger_id=self.charger_id,
+                    transaction_id=tid,
+                    id_tag="__RESERVED__",               # temp placeholder
+                    start_time=datetime.now(timezone.utc)
+                )
+                return tid                               # we own it 🎉
 
-        raise Exception("⚠️ Failed to generate unique transaction ID after 10k tries. RNGesus abandoned you.")
+            except IntegrityError:                       # duplicate hit
+                continue
+
+        raise RuntimeError("RNG exhausted after 100 attempts – improbable, but fatal.")
+
 
     @on("StartTransaction")
     async def on_start_transaction(self, **kwargs):
@@ -183,14 +278,27 @@ class ChargePoint(CP):
         parser_c2c.parse_and_store_start_transaction(self.charger_id, **kwargs)
 
         # Create DB transaction record
-        transaction_record = Transaction.create(
-            charger_id=self.charger_id,
-            connector_id=connector_id,
-            meter_start=meter_start,
-            start_time=datetime.now(),
-            id_tag=id_tag,
-            transaction_id=transaction_id,
+        rows = (
+            Transaction
+            .update(
+                connector_id = connector_id,
+                meter_start  = meter_start,
+                start_time   = datetime.now(timezone.utc),
+                id_tag       = id_tag,
+            )
+            .where(
+                (Transaction.charger_id     == self.charger_id) &
+                (Transaction.transaction_id == transaction_id)
+            )
+            .returning(Transaction)     # <- returns full model row(s)
+            .execute()
         )
+
+        if not rows:
+            raise RuntimeError(f"TX {transaction_id} vanished before update")
+
+        transaction_record = rows[0]   # ✅ This has .id, .id_tag, etc.
+
 
         self.update_transaction_id(connector_id, transaction_id)
         self.state["connectors"][connector_id]["transaction_record_id"] = transaction_record.id
@@ -259,10 +367,11 @@ class ChargePoint(CP):
             try:
                 transaction_record = Transaction.get_by_id(transaction_record_id)
                 transaction_record.meter_stop = meter_stop
-                transaction_record.stop_time = datetime.now()
-                transaction_record.total_consumption = (
-                    meter_stop - transaction_record.meter_start
-                ) / 1000  # convert Wh to kWh
+                transaction_record.stop_time = self.currdatetime()
+                if meter_stop is not None:
+                    transaction_record.total_consumption = (
+                        self.delta_wh(curr=float(meter_stop), prev = float(transaction_record.meter_start)) / 1000.0
+                    )
                 transaction_record.save()
 
                 await send_charging_session_transaction_data_to_applicaton_layer.post_transaction_to_app(
@@ -288,8 +397,17 @@ class ChargePoint(CP):
             transaction_id=None,
         )
 
+        self.state["connectors"][connector_id]["transaction_id"] = None
+        self.state["connectors"][connector_id].pop("transaction_record_id", None)
+
+        wd = self.state["connectors"][connector_id].pop("watchdog_task", None)
+        if wd and not wd.done():
+            wd.cancel()
+
         # ✅ Acknowledge to charger
         response = call_result.StopTransaction(id_tag_info={"status": "Accepted"})
+        asyncio.create_task(self.unlock_connector(connector_id))
+
         parser_ctc.parse_and_store_acknowledgment(
             self.charger_id,
             "StopTransaction",
@@ -315,12 +433,24 @@ class ChargePoint(CP):
             sampled_values = last_entry.get("sampled_value", [])
             print (f"Meter Values recieved: {sampled_values}")
             if sampled_values:
-                # Assume first value is the one we care about (common in OCPP)
+                sv0 = sampled_values[0]
                 try:
-                    value_str = sampled_values[0].get("value")
-                    last_meter_value = float(value_str)
+                    # raw numeric value
+                    raw_value = float(sv0.get("value"))
+
+                    # Normalise energy units: if charger reports kWh, convert to Wh
+                    unit = (sv0.get("unit")            # official OCPP 1.6J field
+                            or sv0.get("unitOfMeasure")  # some vendors use this
+                            or "").lower()
+
+                    if unit in {"kwh", "kilowatthour"}:
+                        raw_value *= 1000  # kWh ➜ Wh, because backend expects Wh
+                        print("Converted kWh → Wh for internal consistency")
+
+                    last_meter_value = raw_value
+
                 except (TypeError, ValueError) as e:
-                    logging.error(f"Failed to parse meter value: {value_str} | {e}")
+                    logging.error(f"Failed to parse meter value: {sv0.get('value')} | {e}")
                     last_meter_value = None
             else:
                 last_meter_value = None
@@ -331,6 +461,25 @@ class ChargePoint(CP):
                     meter_value=last_meter_value,
                     transaction_id=transaction_id,
                 )
+                try:
+                    tx_row = Transaction.get(
+                        (Transaction.charger_id == self.charger_id) &
+                        (Transaction.transaction_id == int(transaction_id))
+                    )
+
+                    tx_row.meter_stop = last_meter_value           # latest raw Wh
+                    tx_row.total_consumption = (
+                        self.delta_wh(curr=float(last_meter_value), prev=float(tx_row.meter_start)) / 1000.0
+                    )                                              # kWh so far
+                    # We intentionally leave stop_time NULL; session isn’t closed yet.
+                    tx_row.save()
+
+                except Transaction.DoesNotExist:
+                    logging.error(
+                        f"[{self.charger_id}] Could not find Transaction row "
+                        f"for live TX {transaction_id} on connector {connector_id}"
+                    )
+
             try:
                 limit_kwh = max_energy_limits.get(int(transaction_id))
                 if limit_kwh is None:
@@ -345,7 +494,7 @@ class ChargePoint(CP):
                     print(f"Found Transaction: {tx}")
 
                     if tx.meter_start is not None:
-                        consumed_kwh = (last_meter_value - tx.meter_start) / 1000.0
+                        consumed_kwh = self.delta_wh(curr=float(last_meter_value), prev=float(tx_row.meter_start)) / 1000.0
 
                         print(
                             f"[Limit Check] TX {transaction_id} — Consumed: {consumed_kwh:.3f} / {limit_kwh:.3f} kWh"

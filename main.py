@@ -4,7 +4,7 @@ import logging
 import multiprocessing
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 import httpx
 import requests
@@ -225,6 +225,9 @@ class CentralSystem:
         self.pending_start_transactions = {}
         max_workers = int(os.getenv("MAX_CONCURRENT_REQUESTS", multiprocessing.cpu_count() * 3))
         self.send_request_semaphore = asyncio.Semaphore(max_workers)
+
+    def currdatetime(self):
+        return datetime.now(timezone.utc).isoformat()
 
     async def handle_charge_point(self, websocket: WebSocket, charge_point_id: str):
         # 🛡 Verify charger ID
@@ -502,7 +505,7 @@ class CentralSystem:
             )
 
         # Get the current time and the time of the last message
-        current_time = datetime.now()
+        current_time = self.currdatetime()
         last_message_time = charge_point.last_message_time
 
         # Calculate the difference in time (in seconds)
@@ -1828,12 +1831,12 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
     start_time = request.start_time or (
         min_time
         if min_time
-        else datetime.min.replace(hour=0, minute=0, second=0, microsecond=0)
+        else datetime.min.replace(tzinfo=timezone.utc, hour=0, minute=0, second=0, microsecond=0)
     )
     end_time = request.end_time or (
         max_time
         if max_time
-        else datetime.max.replace(hour=23, minute=59, second=59, microsecond=0)
+        else datetime.max.replace(tzinfo=timezone.utc, hour=23, minute=59, second=59, microsecond=0)
     )
 
     # Initialize variables to store the results
@@ -2039,7 +2042,7 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
 
         analytics_data = {
             "charger_id": charger_id,
-            "timestamp": datetime.now(),
+            "timestamp": self.currdatetime(),
             "total_uptime": format_duration(uptime_seconds),
             "uptime_percentage": uptime_percentage,
             "total_transactions": total_transactions,
