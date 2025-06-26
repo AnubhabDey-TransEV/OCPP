@@ -227,7 +227,7 @@ class CentralSystem:
         self.send_request_semaphore = asyncio.Semaphore(max_workers)
 
     def currdatetime(self):
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(timezone.utc)
 
     async def handle_charge_point(self, websocket: WebSocket, charge_point_id: str):
         # 🛡 Verify charger ID
@@ -509,10 +509,10 @@ class CentralSystem:
         last_message_time = charge_point.last_message_time
 
         # Calculate the difference in time (in seconds)
-        time_difference = (current_time - last_message_time).total_seconds()
+        time_difference = (datetime.now(timezone.utc) - last_message_time).total_seconds()
 
         # Check if more than 2 minutes (120 seconds) have passed since the last message
-        if time_difference > 60 and charge_point.online:
+        if time_difference > 120 and charge_point.online:
             # If the charger is marked as online but has been inactive for more than 2 minutes, update its status to offline
             charge_point.online = False
             charge_point.state["status"] = "Offline"
@@ -531,11 +531,11 @@ class CentralSystem:
                 )
 
             # Remove the charger from self.active_connections
-            if charge_point_id in self.active_connections:
-                del self.active_connections[charge_point_id]
-                logging.info(
-                    f"Removed {charge_point_id} from local active connections."
-                )
+            # if charge_point_id in self.active_connections:
+            #     del self.active_connections[charge_point_id]
+            #     logging.info(
+            #         f"Removed {charge_point_id} from local active connections."
+            #     )
 
             # Close the WebSocket connection between the charger and backend if it exists
             ws_adapter = (
@@ -551,6 +551,11 @@ class CentralSystem:
                     )
                 except Exception as e:
                     logging.error(f"Error closing WebSocket for {charge_point_id}: {e}")
+                    if charge_point_id in self.active_connections:
+                        del self.active_connections[charge_point_id]
+                        logging.info(
+                            f"Removed {charge_point_id} from local active connections."
+                        )
 
     async def periodic_inactivity_watchdog(self):
         """
