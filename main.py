@@ -113,8 +113,8 @@ async def lifespan(app: FastAPI):
         print("✅ refresh_cache() completed.")
         app.state.db_heartbeat_task = asyncio.create_task(keep_db_alive())
         print("🔄 DB heartbeat task started.")
-        app.state.inactivity_watchdog_task = asyncio.create_task(central_system.periodic_inactivity_watchdog())
-        print("Charger inactivity watchdog started.")
+        # app.state.inactivity_watchdog_task = asyncio.create_task(central_system.periodic_inactivity_watchdog())
+        # print("Charger inactivity watchdog started.")
         start_worker()
         print("Service to send transaction data to BE started successfully.")
         start_hook_worker()
@@ -490,106 +490,106 @@ class CentralSystem:
         charger_data = response.json().get("data", [])
         return charger_data
 
-    async def check_inactivity_and_update_status(self, charge_point_id: str):
-        """
-        Check the last_message_time for the specified charger. If it has been inactive for more than 2 minutes
-        and is still marked as online, mark it as offline, remove it from active connections,
-        and close any stale WebSocket connections between the charger and the backend.
-        """
-        # Get the charger from the central system's charge_points dictionary
-        charge_point = self.charge_points.get(charge_point_id)
+    # async def check_inactivity_and_update_status(self, charge_point_id: str):
+    #     """
+    #     Check the last_message_time for the specified charger. If it has been inactive for more than 2 minutes
+    #     and is still marked as online, mark it as offline, remove it from active connections,
+    #     and close any stale WebSocket connections between the charger and the backend.
+    #     """
+    #     # Get the charger from the central system's charge_points dictionary
+    #     charge_point = self.charge_points.get(charge_point_id)
 
-        if not charge_point:
-            raise HTTPException(
-                status_code=404, detail=f"Charger {charge_point_id} not found"
-            )
+    #     if not charge_point:
+    #         raise HTTPException(
+    #             status_code=404, detail=f"Charger {charge_point_id} not found"
+    #         )
 
-        # Get the current time and the time of the last message
-        current_time = self.currdatetime()
-        last_message_time = charge_point.last_message_time
+    #     # Get the current time and the time of the last message
+    #     current_time = self.currdatetime()
+    #     last_message_time = charge_point.last_message_time
 
-        # Calculate the difference in time (in seconds)
-        time_difference = (datetime.now(timezone.utc) - last_message_time).total_seconds()
+    #     # Calculate the difference in time (in seconds)
+    #     time_difference = (datetime.now(timezone.utc) - last_message_time).total_seconds()
 
-        # Check if more than 2 minutes (120 seconds) have passed since the last message
-        if time_difference > 120 and charge_point.online:
-            # If the charger is marked as online but has been inactive for more than 2 minutes, update its status to offline
-            charge_point.online = False
-            charge_point.state["status"] = "Offline"
-            logging.info(
-                f"Charger {charge_point_id} has been inactive for more than 2 minutes. Marking it as offline."
-            )
+    #     # Check if more than 2 minutes (120 seconds) have passed since the last message
+    #     if time_difference > 120 and charge_point.online:
+    #         # If the charger is marked as online but has been inactive for more than 2 minutes, update its status to offline
+    #         charge_point.online = False
+    #         charge_point.state["status"] = "Offline"
+    #         logging.info(
+    #             f"Charger {charge_point_id} has been inactive for more than 2 minutes. Marking it as offline."
+    #         )
 
-            # Notify the frontend about the charger going offline with updated status
-            await self.notify_frontend(charge_point_id, online=False)
+    #         # Notify the frontend about the charger going offline with updated status
+    #         await self.notify_frontend(charge_point_id, online=False)
 
-            # Remove the charger from active connections in Valkey
-            if f"active_connections:{charge_point_id}" in valkey_client:
-                valkey_client.delete(f"active_connections:{charge_point_id}")
-                logging.info(
-                    f"Removed {charge_point_id} from Valkey active connections."
-                )
+    #         # Remove the charger from active connections in Valkey
+    #         if f"active_connections:{charge_point_id}" in valkey_client:
+    #             valkey_client.delete(f"active_connections:{charge_point_id}")
+    #             logging.info(
+    #                 f"Removed {charge_point_id} from Valkey active connections."
+    #             )
 
-            # Remove the charger from self.active_connections
-            # if charge_point_id in self.active_connections:
-            #     del self.active_connections[charge_point_id]
-            #     logging.info(
-            #         f"Removed {charge_point_id} from local active connections."
-            #     )
+    #         # Remove the charger from self.active_connections
+    #         # if charge_point_id in self.active_connections:
+    #         #     del self.active_connections[charge_point_id]
+    #         #     logging.info(
+    #         #         f"Removed {charge_point_id} from local active connections."
+    #         #     )
 
-            # Close the WebSocket connection between the charger and backend if it exists
-            ws_adapter = (
-                charge_point.websocket
-            )  # Assuming ChargePoint has a WebSocket adapter
+    #         # Close the WebSocket connection between the charger and backend if it exists
+    #         ws_adapter = (
+    #             charge_point.websocket
+    #         )  # Assuming ChargePoint has a WebSocket adapter
 
-            if ws_adapter:
-                try:
-                    # Close the WebSocket connection to the charger
-                    await ws_adapter.close()
-                    logging.info(
-                        f"Closed WebSocket connection for charger {charge_point_id}."
-                    )
-                except Exception as e:
-                    logging.error(f"Error closing WebSocket for {charge_point_id}: {e}")
-                    if charge_point_id in self.active_connections:
-                        del self.active_connections[charge_point_id]
-                        logging.info(
-                            f"Removed {charge_point_id} from local active connections."
-                        )
+    #         if ws_adapter:
+    #             try:
+    #                 # Close the WebSocket connection to the charger
+    #                 await ws_adapter.close()
+    #                 logging.info(
+    #                     f"Closed WebSocket connection for charger {charge_point_id}."
+    #                 )
+    #             except Exception as e:
+    #                 logging.error(f"Error closing WebSocket for {charge_point_id}: {e}")
+    #                 if charge_point_id in self.active_connections:
+    #                     del self.active_connections[charge_point_id]
+    #                     logging.info(
+    #                         f"Removed {charge_point_id} from local active connections."
+    #                     )
 
-    async def periodic_inactivity_watchdog(self):
-        """
-        Background loop that checks all known chargers for inactivity every 60 seconds.
-        Includes exponential backoff retries for up to 3 failures per charger.
-        After that, it resets the count and tries again after a full minute.
-        """
-        failure_counts = {}
+    # async def periodic_inactivity_watchdog(self):
+    #     """
+    #     Background loop that checks all known chargers for inactivity every 60 seconds.
+    #     Includes exponential backoff retries for up to 3 failures per charger.
+    #     After that, it resets the count and tries again after a full minute.
+    #     """
+    #     failure_counts = {}
 
-        while True:
-            try:
-                charger_data = await self.get_charger_data()
-                all_charger_ids = [item["uid"] for item in charger_data]
+    #     while True:
+    #         try:
+    #             charger_data = await self.get_charger_data()
+    #             all_charger_ids = [item["uid"] for item in charger_data]
 
-                for charger_id in all_charger_ids:
-                    try:
-                        await self.check_inactivity_and_update_status(charger_id)
-                        failure_counts[charger_id] = 0  # reset on success
-                    except Exception as e:
-                        count = failure_counts.get(charger_id, 0)
-                        if count < 3:
-                            delay = 2 ** count
-                            logging.warning(f"[Watchdog] Failed to check {charger_id}: {e}. Retrying in {delay}s...")
-                            failure_counts[charger_id] = count + 1
-                            await asyncio.sleep(delay)
-                        else:
-                            logging.error(f"[Watchdog] Failed 3 times on {charger_id}, skipping for 60s.")
-                            failure_counts[charger_id] = 0  # reset after long wait
+    #             for charger_id in all_charger_ids:
+    #                 try:
+    #                     await self.check_inactivity_and_update_status(charger_id)
+    #                     failure_counts[charger_id] = 0  # reset on success
+    #                 except Exception as e:
+    #                     count = failure_counts.get(charger_id, 0)
+    #                     if count < 3:
+    #                         delay = 2 ** count
+    #                         logging.warning(f"[Watchdog] Failed to check {charger_id}: {e}. Retrying in {delay}s...")
+    #                         failure_counts[charger_id] = count + 1
+    #                         await asyncio.sleep(delay)
+    #                     else:
+    #                         logging.error(f"[Watchdog] Failed 3 times on {charger_id}, skipping for 60s.")
+    #                         failure_counts[charger_id] = 0  # reset after long wait
 
-                await asyncio.sleep(60)
+    #             await asyncio.sleep(60)
 
-            except Exception as e:
-                logging.critical(f"[Watchdog] Global error in periodic inactivity check: {e}")
-                await asyncio.sleep(60)
+    #         except Exception as e:
+    #             logging.critical(f"[Watchdog] Global error in periodic inactivity check: {e}")
+    #             await asyncio.sleep(60)
 
 
     async def verify_charger_id(self, charge_point_id: str) -> bool:
