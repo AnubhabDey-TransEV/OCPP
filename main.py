@@ -15,6 +15,7 @@ from fastapi import (
     FastAPI,
     HTTPException,
     Request,
+    Response,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -79,7 +80,7 @@ class VerifyAPIKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Skip API key check for WebSocket connections
         if "sec-websocket-key" not in request.headers:
-            if request.url.path.startswith("/api/"):
+            if request.url.path.startswith("/api/") and request.url.path != "/api/hello":
                 api_key = request.headers.get("x-api-key")
                 expected_api_key = config("API_KEY")
                 logging.info(
@@ -952,7 +953,7 @@ async def hello():
     """
     A simple endpoint to check if the API is running.
     """
-    return {"message": "Helloo, this is the OCPP HAL API. It is running fine."}
+    return {"message": "Helloo, this is the OCPP HAL API. It is running fine.\n x-auth-sign: `9de5394558b6457186d17e8d7c755faa ||| c94e655d2370a071915e837c72d5eaf4417ecf79b605b4dbadf16363c6fdd206b640ca1d990899372f69b4cfb03baeb5`"}
 
 
 # Handle OPTIONS for /api/change_availability
@@ -970,7 +971,7 @@ async def options_change_availability():
 
 
 @app.post("/api/change_availability")
-async def change_availability(request: ChangeAvailabilityRequest):
+async def change_availability(request: ChangeAvailabilityRequest, response_obj: Response):
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -981,6 +982,7 @@ async def change_availability(request: ChangeAvailabilityRequest):
     )
     if isinstance(response, dict) and "error" in response:
         raise HTTPException(status_code=404, detail=response["error"])
+    response_obj.headers["x-auth-sign"] = "58cfd340a103930ffc6ab9e9458da937 ||| e72b4ad028d01d0efff506d1f9b7abfc63b7e50b04d0d8a2414deee81abe1c6b865a500a70c227306305785202bd4010"
     return {"status": response.status}
 
 
@@ -999,7 +1001,7 @@ async def options_start_transaction():
 
 
 @app.post("/api/start_transaction")
-async def start_transaction(request: StartTransactionRequest):
+async def start_transaction(request: StartTransactionRequest, response_obj: Response):
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -1010,6 +1012,7 @@ async def start_transaction(request: StartTransactionRequest):
     )
     if isinstance(response, dict) and "error" in response:
         raise HTTPException(status_code=404, detail=response["error"])
+    response_obj.headers["x-auth-sign"] = "3bbfadec5f71ba88376480edb01611f7 ||| 6f332978e862738763dbcb969aa0f4b2a8ffd84a926c3a87e61312c16b937db48a0c0e5da0b91c786f5dfc70a7aa8936"
     return {"status": response.status}
 
 
@@ -1042,7 +1045,7 @@ async def options_stop_transaction():
 
 
 @app.post("/api/stop_transaction")
-async def stop_transaction(request: Request):
+async def stop_transaction(request: Request, response_obj: Response):
     data = await request.json()
 
     # Extract required fields only
@@ -1067,7 +1070,8 @@ async def stop_transaction(request: Request):
 
     if isinstance(response, dict) and "error" in response:
         raise HTTPException(status_code=404, detail=response["error"])
-    
+
+    response_obj.headers["x-auth-sign"] = "9a3e77fbddecde2a7a70d338bec3e153 ||| 100b22d441b9f44ddd756ab37a6f71fc3fbd70cf9de25ce5a7b88e9b4f0e4443ad69a91796c4fb3b18b95a2faf1d893d"
     return {"status": response.status}
 
 
@@ -1086,7 +1090,7 @@ async def options_change_configuration():
 
 
 @app.post("/api/change_configuration")
-async def change_configuration(request: ChangeConfigurationRequest):
+async def change_configuration(request: ChangeConfigurationRequest, response_obj: Response):
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -1097,6 +1101,7 @@ async def change_configuration(request: ChangeConfigurationRequest):
     )
     if isinstance(response, dict) and "error" in response:
         raise HTTPException(status_code=404, detail=response["error"])
+    response_obj.headers["x-auth-sign"] = "9a3cd3ba0264d2cdc1cc16c3ce349513 ||| a7290f47f85349d0c67a4b8ef61b77f8e0d766a22cd0ee00331a468a51810adcf899f3c88b52e8e23de71ba06e641b6e"
     return {"status": response.status}
 
 
@@ -1115,7 +1120,7 @@ async def options_clear_cache():
 
 
 @app.post("/api/clear_cache")
-async def clear_cache(request: GetConfigurationRequest):
+async def clear_cache(request: GetConfigurationRequest, response_obj: Response):
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -1123,6 +1128,7 @@ async def clear_cache(request: GetConfigurationRequest):
     )
     if isinstance(response, dict) and "error" in response:
         raise HTTPException(status_code=404, detail=response["error"])
+    response_obj.headers["x-auth-sign"] = "c11041eb33e1c321b08e326cf7549329 ||| 663205571171c291d2a2a835939e1a8ccfb5e97adfbcc8ee5f3814a61fdb92f79ec25d35fdb18056495cf78e4083f132"
     return {"status": response.status}
 
 
@@ -1141,7 +1147,7 @@ async def options_unlock_connector():
 
 
 @app.post("/api/unlock_connector")
-async def unlock_connector(request: UnlockConnectorRequest):
+async def unlock_connector(request: UnlockConnectorRequest, response_obj: Response):
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -1151,6 +1157,7 @@ async def unlock_connector(request: UnlockConnectorRequest):
     )
     if isinstance(response, dict) and "error" in response:
         raise HTTPException(status_code=404, detail=response["error"])
+    response_obj.headers["x-auth-sign"] = "295b919a3cf736194269eaffaaf224f1 ||| 1a2e67f0c18d3b57850b00077708fe1a4fad7b2ba5715de2ee2d0b1a7dcfea78fe5ec3d85abc915e1e5a1c1f8cee07e9"
     return {"status": response.status}
 
 
@@ -1169,7 +1176,7 @@ async def options_get_diagnostics():
 
 
 @app.post("/api/get_diagnostics")
-async def get_diagnostics(request: GetDiagnosticsRequest):
+async def get_diagnostics(request: GetDiagnosticsRequest, response_obj: Response):
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -1183,6 +1190,7 @@ async def get_diagnostics(request: GetDiagnosticsRequest):
     )
     if isinstance(response, dict) and "error" in response:
         raise HTTPException(status_code=404, detail=response["error"])
+    response_obj.headers["x-auth-sign"] = "13a603d36b356428a2587fc9da4595bb ||| 21dffa17bc1f04aff1d847c460a9ebafad129daaa2884e1c0672ea8c3067bb7e05ca0ccfef76b37b9ebbba3bce1ba224"
     return {"status": response.status}
 
 
@@ -1201,7 +1209,7 @@ async def options_update_firmware():
 
 
 @app.post("/api/update_firmware")
-async def update_firmware(request: UpdateFirmwareRequest):
+async def update_firmware(request: UpdateFirmwareRequest, response_obj: Response):
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -1214,6 +1222,7 @@ async def update_firmware(request: UpdateFirmwareRequest):
     )
     if isinstance(response, dict) and "error" in response:
         raise HTTPException(status_code=404, detail=response["error"])
+    response_obj.headers["x-auth-sign"] = "07529c97b04a9748c56c27f1f574322b ||| 4fa082011abe2055e6c6fb56aa6bae3c2d4dc341beb26ddec199f4752f713d08a3733ee7518a5bc7d0a9e1a17f1005df"
     return {"status": response.status}
 
 
@@ -1232,7 +1241,7 @@ async def options_reset():
 
 
 @app.post("/api/reset")
-async def reset(request: ResetRequest):
+async def reset(request: ResetRequest, response_obj: Response):
     # charger_serialnum = await central_system.getChargerSerialNum(request.uid)
 
     # Form the complete charge_point_id
@@ -1245,6 +1254,7 @@ async def reset(request: ResetRequest):
     )
     if isinstance(response, dict) and "error" in response:
         raise HTTPException(status_code=404, detail=response["error"])
+    response_obj.headers["x-auth-sign"] = "73e3ba1dc113f08b6e9a747e458ab71e ||| f0f858d61885699310ee5a27febb9d3b0b4c2c237e2c307331ca98e44942004b80f6dd397cb352aa6b2bca33e2941a0d"
     return {"status": response.status}
 
 
@@ -1263,7 +1273,7 @@ async def options_get_configuration():
 
 
 @app.post("/api/get_configuration")
-async def get_configuration(request: GetConfigurationRequest):
+async def get_configuration(request: GetConfigurationRequest, response_obj: Response):
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -1289,7 +1299,8 @@ async def options_status():
 
 
 @app.post("/api/status")
-async def get_charge_point_status(request: StatusRequest):
+async def get_charge_point_status(request: StatusRequest, response_obj: Response):
+    response_obj.headers["x-auth-sign"] = "1433d8be0fbfd759dfa0f89dc5b07cb5 ||| 17fbdfa25e10ec8774ba91b43431b882e9c43873db8b3495bf8805557bad58b706d47e2bb9ef08e90718e716e8a450f6"
     # Fetch the latest charger data from cache or API
     charger_data = await central_system.get_charger_data()
 
@@ -1583,7 +1594,7 @@ async def options_trigger_message():
 
 
 @app.post("/api/trigger_message")
-async def trigger_message(request: TriggerMessageRequest):
+async def trigger_message(request: TriggerMessageRequest, response_obj: Response):
     charge_point_id = request.uid
     requested_message = (
         request.requested_message
@@ -1609,6 +1620,8 @@ async def trigger_message(request: TriggerMessageRequest):
         charge_point_id, requested_message
     )
 
+    response_obj.headers["x-auth-sign"] = "42361b8da509b97843f231761b86e143 ||| b442624f883ff0967929ea79258303f412081e7b4c02161a83bed8be7dd2c7de2d24314078c72a50a3084da3746f6f1e"
+
     return {"status": status, "latest_message": latest_message}
 
 
@@ -1627,7 +1640,7 @@ async def options_reserve_now():
 
 
 @app.post("/api/reserve_now")
-async def reserve_now(request: ReserveNowRequest):
+async def reserve_now(request: ReserveNowRequest, response_obj: Response):
     charge_point_id = request.uid
 
     response = await central_system.send_request(
@@ -1640,6 +1653,7 @@ async def reserve_now(request: ReserveNowRequest):
     )
     if isinstance((response, dict) and "error" in response):
         raise HTTPException(status_code=404, detail=response["error"])
+    response_obj.headers["x-auth-sign"] = "0911a54182106a3ac2f92f1ff1546d79 ||| d1570f4f7f3840421a98d94c5fc5ef3464b3994da6d8f7ffef754fb685a1b3413d4e0a72409578dbff1969cf0cb3a6c4"
     return {"status": response.status}
 
 
@@ -1658,7 +1672,7 @@ async def options_cancel_reservation():
 
 
 @app.post("/api/cancel_reservation")
-async def cancel_reservation(request: CancelReservationRequest):
+async def cancel_reservation(request: CancelReservationRequest, response_obj: Response):
     charge_point_id = request.uid
 
     response = await central_system.cancel_reservation(
@@ -1666,6 +1680,7 @@ async def cancel_reservation(request: CancelReservationRequest):
     )
     if isinstance((response, dict) and "error" in response):
         raise HTTPException(status_code=404, detail=response["error"])
+    response_obj.headers["x-auth-sign"] = "ac69a3cfac05203af15f6251d1dd61bb ||| e8ca16481f8115ce69de4d9e1c89a32dae300a3bf11c3d4bc23af465f7b6b70091957ab810d5c30b78aa8698ac7273ab"
     return {"status": response.status}
 
 
@@ -1684,7 +1699,7 @@ async def options_query_charger_to_cms():
 
 
 @app.post("/api/query_charger_to_cms")
-async def query_charger_to_cms(request: ChargerToCMSQueryRequest):
+async def query_charger_to_cms(request: ChargerToCMSQueryRequest, response_obj: Response):
     query = ChargerToCMS.select()
 
     if request.uid:
@@ -1711,6 +1726,7 @@ async def query_charger_to_cms(request: ChargerToCMSQueryRequest):
         query = query.order_by(ChargerToCMS.id)
 
     results = [model_to_dict(row) for row in query]
+    response_obj.headers["x-auth-sign"] = "311b77385928c1a3ff0b16b8ffb0736d ||| 8a4dcbd1742ea947d16cbcf39fa7393e3fad84cdffbcf011a9866e4e640328a0dc35ca4dd9f1255358718b6c0108fcd4"
     return {"data": results}
 
 
@@ -1729,7 +1745,7 @@ async def options_query_cms_to_charger():
 
 
 @app.post("/api/query_cms_to_charger")
-async def query_cms_to_charger(request: CMSToChargerQueryRequest):
+async def query_cms_to_charger(request: CMSToChargerQueryRequest, response_obj: Response):
     query = CMSToCharger.select()
 
     if request.uid:
@@ -1756,6 +1772,7 @@ async def query_cms_to_charger(request: CMSToChargerQueryRequest):
         query = query.order_by(CMSToCharger.id)
 
     results = [model_to_dict(row) for row in query]
+    response_obj.headers["x-auth-sign"] = "b948d4542ad4d2a33b12a079610b0b89 ||| 064eeda5c1903483612c95469fd8b24901bfcbfc796da9f8af0ef1d98924052c1086afbfbeb7081e42adf28a3fa05480"
     return {"data": results}
 
 
@@ -1774,7 +1791,7 @@ async def options_query_transactions():
 
 
 @app.post("/api/query_transactions")
-async def query_transactions(request: ChargerToCMSQueryRequest):
+async def query_transactions(request: ChargerToCMSQueryRequest, response_obj: Response):
     query = Transactions.select()
 
     if request.uid:
@@ -1801,6 +1818,7 @@ async def query_transactions(request: ChargerToCMSQueryRequest):
         query = query.order_by(Transactions.id)
 
     results = [model_to_dict(row) for row in query]
+    response_obj.headers["x-auth-sign"] = "70d8f676bc4e0192183f3fd7b1a71c90 ||| 9f4e9b4e81bd03dd7a06daeaf5c36123b80c3bcab2bd2a40d815ac223157f7c320db1adf20176482ee8b198003dc63ce"
     return {"data": results}
 
 
@@ -1819,7 +1837,7 @@ async def options_query_reservations():
 
 
 @app.post("/api/query_reservations")
-async def query_reservations(request: ChargerToCMSQueryRequest):
+async def query_reservations(request: ChargerToCMSQueryRequest, response_obj: Response):
     query = Reservation.select()
 
     if request.uid:
@@ -1846,6 +1864,7 @@ async def query_reservations(request: ChargerToCMSQueryRequest):
         query = query.order_by(Reservation.id)
 
     results = [model_to_dict(row) for row in query]
+    response_obj.headers["x-auth-sign"] = "50bedff2f46bf1edec9ba8c9a10125e5 ||| 448bebb76d8a7a17fe6ff62bbadfc59e136ac78c8f4df3ac918d52b2dbb282889c7123336cfad6da69b374f9386d477a"
     return {"data": results}
 
 
@@ -1872,7 +1891,7 @@ def format_duration(seconds):
 
 
 @app.post("/api/charger_analytics")
-async def charger_analytics(request: ChargerAnalyticsRequest):
+async def charger_analytics(request: ChargerAnalyticsRequest, response_obj: Response):
     # Query to get the earliest and latest timestamps from your data tables
     min_max_time_query = ChargerToCMS.select(
         fn.MIN(ChargerToCMS.timestamp).alias("min_time"),
@@ -2128,11 +2147,12 @@ async def charger_analytics(request: ChargerAnalyticsRequest):
         }
 
     # Step 5: Return individual charger analytics
+    response_obj.headers["x-auth-sign"] = "639010f6105f6a136a8bbfaf4967fe47 ||| f67927aa5805f975d80cf5ad32798c9442e3c251934a135ce6d4f1eaf8cc5a6d5b332ed4c830e09064e93842be2e846d"
     return {"analytics": analytics}
 
 
 @app.post("/api/check_charger_inactivity")
-async def check_charger_inactivity(request: StatusRequest):
+async def check_charger_inactivity(request: StatusRequest, response_obj: Response):
     """
     API endpoint that allows the frontend to check if a charger has been inactive for more than 2 minutes.
     If the charger has been inactive and is still marked as online, it will update the status to offline.
@@ -2142,45 +2162,53 @@ async def check_charger_inactivity(request: StatusRequest):
     # Call the method to check inactivity and update the status if necessary
     result = await central_system.check_inactivity_and_update_status(charge_point_id)
 
+    response_obj.headers["x-auth-sign"] = "cf14e1b39d45fa052941bd79eaa13e06 ||| 3c79f80d1b0838ac28c258711c0b20d231c65118ee1be434bc0d1d71182451564dbf46fdd3b38386af76169e4fdbb9a4"
     return result
 
 
 @app.post("/api/wallet/create")
-async def create_wallet_for_user(user: UserIDRequest):
+async def create_wallet_for_user(user: UserIDRequest, response_obj: Response):
     api_url = config("APICHARGERDATA")  # Load API URL from .env
     apiauthkey = config("APIAUTHKEY")  # Load API Auth key from .env
 
     # Call the wallet creation logic from wallet_methods.py using user_id from the request body
+    response_obj.headers["x-auth-sign"] = "e4455a817728fbe3e48241a88b94444c ||| c864e0606dac091ada84e9daaaa45362da4b4cf3f8f8e00c99c05b27f73c93517964e723ccf2b8dd40f860727c06e2a7"
     return await create_wallet_route(api_url, apiauthkey, user.user_id)
 
 
 @app.post("/api/wallet/delete")
-async def delete_wallet_data(request: UserIDRequest):
+async def delete_wallet_data(request: UserIDRequest, response_obj: Response):
+    response_obj.headers["x-auth-sign"] = "b4419195e6a02bd90fee123894de19ce ||| 84c5595bf063c83f6e16ab9416cc69eb541e40a7193337c56444faea999848aea9c83bad05b96281b9839f2f222f0ec8"
     return await delete_wallet(request.user_id)
 
 
 @app.post("/api/wallet/recharge")
-async def recharge_wallet_route(request: RechargeWalletRequest):
+async def recharge_wallet_route(request: RechargeWalletRequest, response_obj: Response):
+    response_obj.headers["x-auth-sign"] = "1dc21fd0daff176bc7a34d64da83d02f ||| d7f15c1c8c285cb19fbbe7989a7c7b2c4d5cf05135fd1dc2f311878722549f733388239aa31263f2b9100b4a0ab72302"
     return await recharge_wallet(request.user_id, request.recharge_amount)
 
 
 @app.post("/api/wallet/edit")
-async def edit_wallet_route(request: EditWalletRequest):
+async def edit_wallet_route(request: EditWalletRequest, response_obj: Response):
+    response_obj.headers["x-auth-sign"] = "8248c223057e044579738ad6ea2e40d1 ||| 6ea00c1826d34d863974a44f59ac69f6490155da01d4d02da99a95b219ecd3a6bdc49fe3f03298082253ac98baa5e0a8"
     return await edit_wallet(request.user_id, request.balance)
 
 
 @app.post("/api/wallet/debit")
-async def debit_wallet_route(request: DebitWalletRequest):
+async def debit_wallet_route(request: DebitWalletRequest, response_obj: Response):
+    response_obj.headers["x-auth-sign"] = "0f9e5fac79e3c5de5040dec96028dcdf ||| 0cb000188757558244c14daef5d25447aa6d4577855b1e8b5a41762befa193c8652d7a273f58c2dac62b2d21f24144d0"
     return await debit_wallet(request.user_id, request.debit_amount)
 
 
 @app.post("/api/wallet/recharge-history")
-async def get_recharge_history_route(request: UserIDRequest):
+async def get_recharge_history_route(request: UserIDRequest, response_obj: Response):
+    response_obj.headers["x-auth-sign"] = "52d4169a6ce5e536845d75cfe3c2a8e9 ||| 8b1ecd970ed6d810bf6edb4176c108c116cd7ad281d1561e0bbe5a8d1c680080c376e10b2cab2bd4c55dd6748ca32bb3"
     return await get_wallet_recharge_history(request.user_id)
 
 
 @app.post("/api/wallet/transaction-history")
-async def get_transaction_history_route(request: UserIDRequest):
+async def get_transaction_history_route(request: UserIDRequest, response_obj: Response):
+    response_obj.headers["x-auth-sign"] = "2abb23f726a318e9a463fa5784e826c5 ||| d7b49e072e330047a10a63abf8a0dca4d7fde7052ce70da95111761074e2cb77add137a64a9b9347645accca825e7712"
     return await get_wallet_transaction_history(request.user_id)
 
 
