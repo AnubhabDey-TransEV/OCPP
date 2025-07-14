@@ -948,7 +948,7 @@ class ChargerAnalyticsRequest(BaseModel):
 # REST API endpoints
 
 
-@app.post("/api/hello")
+@app.get("/api/hello")
 async def hello():
     """
     A simple endpoint to check if the API is running.
