@@ -2115,7 +2115,7 @@ async def charger_analytics(request: ChargerAnalyticsRequest, response_obj: Resp
 
         analytics_data = {
             "charger_id": charger_id,
-            "timestamp": self.currdatetime(),
+            "timestamp": CentralSystem.currdatetime(),
             "total_uptime": format_duration(uptime_seconds),
             "uptime_percentage": uptime_percentage,
             "total_transactions": total_transactions,
